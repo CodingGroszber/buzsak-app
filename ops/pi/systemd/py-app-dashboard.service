@@ -1,0 +1,17 @@
+[Unit]
+Description=Py App Dashboard (Flet Web)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=neulas
+Group=neulas
+WorkingDirectory=/home/neulas/projects/py_app
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/neulas/projects/py_app/.venv/bin/python /home/neulas/projects/py_app/main.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

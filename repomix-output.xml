@@ -1,0 +1,1372 @@
+This file is a merged representation of the entire codebase, combined into a single document by Repomix.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of the entire repository's contents.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+.gitignore
+.python-version
+deploy_remote.sh
+howtoconnect.md
+main.py
+ops/pi/cleanup_nonessential.sh
+ops/pi/deploy.py
+ops/pi/nginx/py-app-dashboard.conf
+ops/pi/provision_remote.sh
+ops/pi/statuscheck_remote.sh
+ops/pi/systemd/py-app-dashboard.service
+pyproject.toml
+README.md
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path=".gitignore">
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+</file>
+
+<file path=".python-version">
+3.14
+</file>
+
+<file path="deploy_remote.sh">
+#!/usr/bin/env bash
+set -euo pipefail
+
+SSH_TARGET="${1:-rpi3}"
+PROJECT_PATH="${2:-/home/neulas/projects/py_app}"
+
+# Fast path: no cleanup, no apt refresh, app/service restart + verification.
+python ops/pi/deploy.py \
+  --ssh-target "${SSH_TARGET}" \
+  --project-path "${PROJECT_PATH}" \
+  --quick
+</file>
+
+<file path="howtoconnect.md">
+# How To Connect
+
+This file is only about how users can reach the dashboard and verify it works.
+
+## Quick URLs
+
+- LAN primary: http://192.168.1.95
+- LAN direct app port: http://192.168.1.95:8550
+- Tailscale tailnet IP: http://100.123.208.10
+
+## User Type A: Family User On Home Wi-Fi
+
+1. Open http://192.168.1.95
+2. If it opens, access is OK.
+3. If it fails, try http://192.168.1.95:8550
+4. If 8550 works but 80 does not, nginx/proxy issue. Tell operator.
+
+## User Type B: Remote User With Tailscale
+
+1. Confirm Tailscale is connected on your device.
+2. Open http://100.123.208.10
+3. If it fails, check your device can ping the Pi tailnet IP.
+4. If still failing, operator should verify tailscaled on Pi and ACL/routing in tailnet.
+
+## User Type C: Operator Or Developer (SSH Access)
+
+1. SSH to Pi.
+2. Run:
+
+```bash
+bash /home/neulas/projects/py_app/ops/pi/statuscheck_remote.sh
+```
+
+3. Confirm these checks are green:
+- HTTP/1.1 200 OK on 127.0.0.1:8550
+- HTTP/1.1 200 OK on 127.0.0.1
+- No failed units
+- Ports listening: 80, 8550, 5580
+
+## Matter Node Availability Check
+
+When dashboard shows Matter offline, server may still be up while door nodes are unavailable.
+
+Run this quick check:
+
+```bash
+cd /home/neulas/projects/py_app
+source .venv/bin/activate
+python - <<"PY"
+import json, websocket
+for node in (1, 3):
+    ws = websocket.create_connection("ws://127.0.0.1:5580/ws", timeout=4)
+    ws.recv()
+    ws.send(json.dumps({
+        "message_id": "1",
+        "command": "read_attribute",
+        "args": {"node_id": node, "attribute_path": "1/6/0"}
+    }))
+    print(node, ws.recv())
+    ws.close()
+PY
+```
+
+Interpretation:
+- If response says Node is not yet available, Matter server is online but the device node is not currently reachable.
+- If websocket connection itself fails, Matter server/service is down.
+
+## Fast User Self-Check
+
+Any user can do this without SSH:
+
+1. Open http://192.168.1.95
+2. If dashboard loads and updates badges, core access works.
+3. If door tiles show offline but page loads, network path is good and issue is on Matter/device side.
+</file>
+
+<file path="main.py">
+import asyncio
+import json
+import threading
+import time
+
+import flet as ft
+import requests
+import websocket
+
+PLC_DIRECT_URL = "http://192.168.1.94/api/state"
+PLC_CONTROL_URL = "http://192.168.1.94/api/control"
+FLASK_URL = "https://neugarden.v6.rocks/plc/api/data"
+
+TIMEOUT_DIRECT = 0.4
+TIMEOUT_SERVER = 3.0
+POLL_DIRECT = 0.5
+POLL_SERVER = 2.0
+POLL_MATTER = 1.0
+UI_TICK = 0.35
+
+MATTER_WS_URL = "ws://192.168.1.95:5580/ws"
+MATTER_ENDPOINT_ID = 1
+MATTER_ONOFF_CLUSTER = 6
+MATTER_PULSE_SECONDS = 0.5
+
+MATTER_DOORS = {
+    "right": {"label": "GARAGE RIGHT", "node_id": 1},
+    "left": {"label": "GARAGE LEFT", "node_id": 3},
+}
+
+# Visual theme aligned with Garden PLC HTML.
+C_BG = "#0c0c0c"
+C_SURFACE = "#141414"
+C_BORDER = "#222222"
+C_TEXT = "#d4d4d4"
+C_DIM = "#555555"
+C_DIM2 = "#3a3a3a"
+C_ON = "#22c55e"
+C_WARN = "#ef4444"
+C_ACCENT = "#3b82f6"
+C_AMBER = "#f59e0b"
+
+
+def main(page: ft.Page):
+    page.title = "Garage PLC Dashboard"
+    page.theme_mode = ft.ThemeMode.DARK
+    page.bgcolor = C_BG
+    page.padding = 14
+
+    _st = {
+        "d_ok": False,
+        "d_ms": 0,
+        "d_data": None,
+        "d_err": "",
+        "s_ok": False,
+        "s_ms": 0,
+        "s_data": None,
+        "s_err": "",
+        "mr_ok": False,
+        "mr_ms": 0,
+        "mr_on": False,
+        "mr_err": "",
+        "ml_ok": False,
+        "ml_ms": 0,
+        "ml_on": False,
+        "ml_err": "",
+        "changed": True,
+    }
+    _lock = threading.Lock()
+    _mode = ["auto"]
+    _remote_active = [False]
+
+    def border_all(width: int, color: str) -> ft.Border:
+        s = ft.BorderSide(width, color)
+        return ft.Border(top=s, right=s, bottom=s, left=s)
+
+    def key_prefix(side: str) -> str:
+        return "mr" if side == "right" else "ml"
+
+    def make_status_badge(text: str, kind: str = "off") -> tuple[ft.Container, ft.Text]:
+        txt = ft.Text(text, size=10, weight=ft.FontWeight.BOLD)
+        box = ft.Container(content=txt, padding=ft.Padding(
+            6, 3, 6, 3), border_radius=4)
+        set_status_badge(box, txt, kind)
+        return box, txt
+
+    def set_status_badge(box: ft.Container, txt: ft.Text, kind: str):
+        if kind == "on":
+            txt.color = C_ON
+            box.bgcolor = "#0d2518"
+            box.border = border_all(1, "#1f5f3b")
+        elif kind == "warn":
+            txt.color = C_WARN
+            box.bgcolor = "#2a1414"
+            box.border = border_all(1, "#5a2323")
+        elif kind == "accent":
+            txt.color = C_ACCENT
+            box.bgcolor = "#122035"
+            box.border = border_all(1, "#24466e")
+        elif kind == "amber":
+            txt.color = C_AMBER
+            box.bgcolor = "#2a2010"
+            box.border = border_all(1, "#6a4f1f")
+        else:
+            txt.color = C_DIM
+            box.bgcolor = "#1a1a1a"
+            box.border = border_all(1, C_DIM2)
+
+    def mode_style(active: bool) -> ft.ButtonStyle:
+        return ft.ButtonStyle(
+            bgcolor="#1f2937" if active else C_SURFACE,
+            color=C_ACCENT if active else "#7a8798",
+            side=ft.BorderSide(1, "#314157" if active else C_BORDER),
+            shape=ft.RoundedRectangleBorder(radius=4),
+            padding=ft.Padding(10, 6, 10, 6),
+        )
+
+    def make_tile(title: str, content: ft.Control, col: int = 6) -> ft.Container:
+        return ft.Container(
+            col={"xs": 12, "sm": col, "md": col, "lg": col},
+            bgcolor=C_SURFACE,
+            border=border_all(1, C_BORDER),
+            border_radius=6,
+            padding=10,
+            content=ft.Column(
+                [
+                    ft.Text(title, size=10, color=C_DIM,
+                            weight=ft.FontWeight.BOLD),
+                    content,
+                ],
+                spacing=6,
+            ),
+        )
+
+    def io_tile(label: str, value: str, kind: str, sub: str | None = None) -> ft.Container:
+        badge_box, badge_txt = make_status_badge(value, kind)
+        items = [
+            ft.Text(label, size=10, color=C_DIM, no_wrap=True),
+            badge_box,
+        ]
+        if sub:
+            items.append(ft.Text(sub, size=10, color=C_DIM))
+        return ft.Container(
+            col={"xs": 12, "sm": 6, "md": 4, "lg": 3},
+            bgcolor=C_SURFACE,
+            border=border_all(1, C_BORDER),
+            border_radius=5,
+            padding=9,
+            content=ft.Column(items, spacing=5),
+        )
+
+    header_dot = ft.Container(
+        width=8, height=8, border_radius=4, bgcolor=C_WARN)
+    header_ip = ft.Text("connecting...", size=11, color=C_DIM)
+    header_fw = ft.Text("", size=11, color=C_DIM)
+
+    lan_badge_box, lan_badge_txt = make_status_badge("LAN --", "off")
+    srv_badge_box, srv_badge_txt = make_status_badge("SERVER --", "off")
+    err_text = ft.Text("", size=11, color=C_WARN, visible=False)
+
+    btn_auto = ft.TextButton("AUTO")
+    btn_lan = ft.TextButton("LAN")
+    btn_srv = ft.TextButton("SERVER")
+
+    rc_label = ft.Text("REMOTE ARM", size=11, color=C_TEXT,
+                       weight=ft.FontWeight.BOLD)
+    rc_slider = ft.Slider(
+        min=0,
+        max=100,
+        value=0,
+        divisions=100,
+        active_color=C_AMBER,
+        inactive_color="#203020",
+        thumb_color="#ffffff",
+        expand=True,
+    )
+
+    door_refs: dict[str, dict[str, ft.Control]] = {}
+    door_tiles_row = ft.ResponsiveRow(spacing=6, run_spacing=6)
+
+    for side, cfg in MATTER_DOORS.items():
+        state_box, state_txt = make_status_badge("OFFLINE", "warn")
+        activate_btn = ft.FilledButton(
+            "ACTIVATE",
+            style=ft.ButtonStyle(
+                bgcolor="#1f3a5f",
+                color="#e8f1ff",
+                shape=ft.RoundedRectangleBorder(radius=4),
+            ),
+            disabled=True,
+        )
+        hint = ft.Text("Slide REMOTE ARM to enable", size=10, color=C_DIM)
+        latency = ft.Text("-- ms", size=10, color=C_DIM)
+
+        tile = make_tile(
+            cfg["label"],
+            ft.Column(
+                [
+                    ft.Row([state_box, ft.Text("·", size=10,
+                           color=C_DIM2), latency], spacing=6),
+                    activate_btn,
+                    hint,
+                ],
+                spacing=6,
+            ),
+            col=6,
+        )
+        door_tiles_row.controls.append(tile)
+        door_refs[side] = {
+            "state_box": state_box,
+            "state_txt": state_txt,
+            "activate_btn": activate_btn,
+            "hint": hint,
+            "latency": latency,
+        }
+
+    meta_row = ft.ResponsiveRow(spacing=6, run_spacing=6)
+    inputs_row = ft.ResponsiveRow(spacing=6, run_spacing=6)
+    outputs_row = ft.ResponsiveRow(spacing=6, run_spacing=6)
+
+    content = ft.Column(
+        [
+            ft.Container(
+                bgcolor=C_BG,
+                border=ft.Border(bottom=ft.BorderSide(1, C_BORDER)),
+                padding=ft.Padding(0, 0, 0, 10),
+                content=ft.Row(
+                    [
+                        ft.Text("⚙ Garage PLC · Cabinet 1", size=15,
+                                color=C_TEXT, weight=ft.FontWeight.BOLD),
+                        ft.Row([header_dot, header_ip, header_fw], spacing=8),
+                    ],
+                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                ),
+            ),
+            ft.Container(
+                bgcolor=C_SURFACE,
+                border=border_all(1, C_BORDER),
+                border_radius=6,
+                padding=10,
+                content=ft.Column(
+                    [
+                        ft.Row([lan_badge_box, srv_badge_box], spacing=8),
+                        ft.Row([btn_auto, btn_lan, btn_srv], spacing=6),
+                        ft.Row([rc_label, rc_slider], spacing=10),
+                        err_text,
+                    ],
+                    spacing=8,
+                ),
+            ),
+            ft.Text("GARAGE DOORS", size=9, color=C_DIM,
+                    weight=ft.FontWeight.BOLD),
+            door_tiles_row,
+            ft.Text("PLC META", size=9, color=C_DIM,
+                    weight=ft.FontWeight.BOLD),
+            meta_row,
+            ft.Text("INPUTS", size=9, color=C_DIM, weight=ft.FontWeight.BOLD),
+            inputs_row,
+            ft.Text("OUTPUTS", size=9, color=C_DIM, weight=ft.FontWeight.BOLD),
+            outputs_row,
+        ],
+        spacing=8,
+        scroll=ft.ScrollMode.AUTO,
+        expand=True,
+    )
+
+    page.add(content)
+
+    def _set_mode(mode: str):
+        _mode[0] = mode
+        btn_auto.style = mode_style(mode == "auto")
+        btn_lan.style = mode_style(mode == "direct")
+        btn_srv.style = mode_style(mode == "server")
+        with _lock:
+            _st["changed"] = True
+        page.update()
+
+    def _set_remote(active: bool):
+        _remote_active[0] = active
+        rc_slider.value = 100 if active else 0
+        with _lock:
+            _st["changed"] = True
+        page.update()
+
+    def _on_rc_end(_e):
+        _set_remote((rc_slider.value or 0) >= 95)
+
+    rc_slider.on_change_end = _on_rc_end
+    btn_auto.on_click = lambda _e: _set_mode("auto")
+    btn_lan.on_click = lambda _e: _set_mode("direct")
+    btn_srv.on_click = lambda _e: _set_mode("server")
+    _set_mode("auto")
+
+    def _matter_call(command: str, args: dict, timeout: float = 2.0):
+        t0 = time.monotonic()
+        ws = websocket.create_connection(MATTER_WS_URL, timeout=timeout)
+        try:
+            ws.settimeout(timeout)
+            ws.recv()
+            ws.send(json.dumps(
+                {"message_id": "1", "command": command, "args": args}))
+            while True:
+                data = json.loads(ws.recv())
+                if data.get("message_id") != "1":
+                    continue
+                if data.get("error_code") is not None:
+                    raise RuntimeError(data.get("details")
+                                       or f"Matter error {data['error_code']}")
+                ms = round((time.monotonic() - t0) * 1000)
+                return data.get("result"), ms
+        finally:
+            ws.close()
+
+    def _matter_device_command(node_id: int, command_name: str):
+        _matter_call(
+            "device_command",
+            {
+                "node_id": node_id,
+                "endpoint_id": MATTER_ENDPOINT_ID,
+                "cluster_id": MATTER_ONOFF_CLUSTER,
+                "command_name": command_name,
+                "payload": {},
+            },
+        )
+
+    def _matter_read_on_state(node_id: int):
+        result, ms = _matter_call(
+            "read_attribute",
+            {
+                "node_id": node_id,
+                "attribute_path": f"{MATTER_ENDPOINT_ID}/{MATTER_ONOFF_CLUSTER}/0",
+            },
+        )
+        key = f"{MATTER_ENDPOINT_ID}/{MATTER_ONOFF_CLUSTER}/0"
+        return bool(result.get(key)), ms
+
+    def _pulse_door(side: str):
+        if not _remote_active[0]:
+            return
+        node_id = MATTER_DOORS[side]["node_id"]
+        p = key_prefix(side)
+        try:
+            _matter_device_command(node_id, "Off")
+            time.sleep(0.05)
+            _matter_device_command(node_id, "On")
+            time.sleep(MATTER_PULSE_SECONDS)
+            _matter_device_command(node_id, "Off")
+            with _lock:
+                _st.update(**{f"{p}_ok": True, f"{p}_on": False,
+                           f"{p}_err": "", "changed": True})
+        except Exception as ex:
+            with _lock:
+                _st.update(
+                    **{f"{p}_ok": False, f"{p}_err": str(ex), "changed": True})
+
+    for side in MATTER_DOORS:
+        door_refs[side]["activate_btn"].on_click = lambda _e, s=side: threading.Thread(
+            target=_pulse_door, args=(s,), daemon=True
+        ).start()
+
+    def _render_meta_tiles(data: dict):
+        def _pick_metric(source: dict, names: list[str]):
+            containers = [source]
+            for key in ("sensors", "metrics", "status", "plc", "data"):
+                nested = source.get(key)
+                if isinstance(nested, dict):
+                    containers.append(nested)
+
+            for container in containers:
+                for name in names:
+                    if name in container and container[name] is not None:
+                        return container[name]
+            return "--"
+
+        def _pick_analog_metric(source: dict, metric_name: str, value_keys: list[str]):
+            analog = source.get("analog")
+            if not isinstance(analog, list):
+                return "--"
+
+            for item in analog:
+                if not isinstance(item, dict):
+                    continue
+                if str(item.get("name", "")).lower() != metric_name.lower():
+                    continue
+                for key in value_keys:
+                    value = item.get(key)
+                    if value is not None:
+                        return value
+            return "--"
+
+        fw = str(data.get("firmware", "--"))
+        ip = str(data.get("ip", "--"))
+        water_level = _pick_analog_metric(
+            data, "water_level", ["liters", "value", "level"])
+        if water_level == "--":
+            water_level = _pick_metric(
+                data,
+                ["water_level", "waterLevel", "tank_level", "tankLevel", "level"],
+            )
+
+        pressure = _pick_analog_metric(
+            data, "pressure", ["bar", "value", "pressure"])
+        if pressure == "--":
+            pressure = _pick_metric(
+                data,
+                ["pressure", "pressure_bar", "pressureBar", "plc_pressure"],
+            )
+
+        water_text = f"{water_level} L" if water_level != "--" else "--"
+        pressure_text = f"{pressure} bar" if pressure != "--" else "--"
+
+        meta_row.controls = [
+            make_tile("Firmware", ft.Text(fw, size=17, color=C_TEXT,
+                      weight=ft.FontWeight.BOLD), col=3),
+            make_tile("PLC IP", ft.Text(ip, size=17, color=C_TEXT,
+                      weight=ft.FontWeight.BOLD), col=3),
+            make_tile("Water Level", ft.Text(water_text, size=17, color=C_TEXT,
+                      weight=ft.FontWeight.BOLD), col=3),
+            make_tile("Pressure", ft.Text(pressure_text, size=17, color=C_TEXT,
+                      weight=ft.FontWeight.BOLD), col=3),
+        ]
+
+    def _render_io_tiles(data: dict):
+        inputs = data.get("inputs", [])
+        outputs = data.get("outputs", [])
+
+        inputs_row.controls = []
+        for inp in inputs:
+            is_on = bool(inp.get("state"))
+            sub = None
+            if inp.get("name") in ("left_sw", "right_sw"):
+                sub = "AUTO/WELL selector"
+            inputs_row.controls.append(
+                io_tile(
+                    str(inp.get("label", inp.get("name", "INPUT"))),
+                    "ACTIVE" if is_on else "IDLE",
+                    "on" if is_on else "off",
+                    sub,
+                )
+            )
+
+        outputs_row.controls = []
+        for out in outputs:
+            is_on = bool(out.get("state"))
+            outputs_row.controls.append(
+                io_tile(
+                    str(out.get("label", out.get("name", "OUTPUT"))),
+                    "ON" if is_on else "OFF",
+                    "on" if is_on else "off",
+                )
+            )
+
+    def _refresh_door_controls(snap: dict):
+        for side in MATTER_DOORS:
+            p = key_prefix(side)
+            ok = bool(snap.get(f"{p}_ok"))
+            is_on = bool(snap.get(f"{p}_on"))
+            ms = snap.get(f"{p}_ms", 0)
+            ref = door_refs[side]
+
+            ref["latency"].value = f"{ms} ms" if ok else "-- ms"
+            can_trigger = _remote_active[0] and ok
+            ref["activate_btn"].disabled = not can_trigger
+
+            if not ok:
+                ref["state_txt"].value = "OFFLINE"
+                set_status_badge(ref["state_box"], ref["state_txt"], "warn")
+                err_msg = str(snap.get(f"{p}_err", ""))
+                if "not (yet) available" in err_msg:
+                    ref["hint"].value = "Node unavailable"
+                else:
+                    ref["hint"].value = "Matter offline"
+                ref["hint"].color = C_WARN
+            elif is_on:
+                ref["state_txt"].value = "ON"
+                set_status_badge(ref["state_box"], ref["state_txt"], "amber")
+                ref["hint"].value = "Pulse active"
+                ref["hint"].color = C_DIM
+            else:
+                ref["state_txt"].value = "OFF"
+                set_status_badge(ref["state_box"], ref["state_txt"], "on")
+                if _remote_active[0]:
+                    ref["hint"].value = "Ready · 0.5s pulse"
+                    ref["hint"].color = C_DIM
+                else:
+                    ref["hint"].value = "Slide REMOTE ARM to enable"
+                    ref["hint"].color = C_DIM
+
+    def fetch_direct():
+        while True:
+            try:
+                t0 = time.monotonic()
+                data = requests.get(
+                    PLC_DIRECT_URL, timeout=TIMEOUT_DIRECT).json()
+                ms = round((time.monotonic() - t0) * 1000)
+                with _lock:
+                    _st.update(d_ok=True, d_ms=ms, d_data=data,
+                               d_err="", changed=True)
+            except Exception as ex:
+                with _lock:
+                    _st.update(d_ok=False, d_err=str(ex), changed=True)
+            time.sleep(POLL_DIRECT)
+
+    def fetch_server():
+        while True:
+            try:
+                t0 = time.monotonic()
+                data = requests.get(FLASK_URL, timeout=TIMEOUT_SERVER).json()
+                ms = round((time.monotonic() - t0) * 1000)
+                with _lock:
+                    _st.update(s_ok=True, s_ms=ms, s_data=data,
+                               s_err="", changed=True)
+            except Exception as ex:
+                with _lock:
+                    _st.update(s_ok=False, s_err=str(ex), changed=True)
+            time.sleep(POLL_SERVER)
+
+    def fetch_matter():
+        while True:
+            updates = {"changed": True}
+            for side, cfg in MATTER_DOORS.items():
+                p = key_prefix(side)
+                try:
+                    is_on, ms = _matter_read_on_state(cfg["node_id"])
+                    updates[f"{p}_ok"] = True
+                    updates[f"{p}_ms"] = ms
+                    updates[f"{p}_on"] = is_on
+                    updates[f"{p}_err"] = ""
+                except Exception as ex:
+                    updates[f"{p}_ok"] = False
+                    updates[f"{p}_err"] = str(ex)
+            with _lock:
+                _st.update(**updates)
+            time.sleep(POLL_MATTER)
+
+    def enforce_off_default_once():
+        updates = {"changed": True}
+        for side, cfg in MATTER_DOORS.items():
+            p = key_prefix(side)
+            try:
+                _matter_device_command(cfg["node_id"], "Off")
+                updates[f"{p}_on"] = False
+            except Exception:
+                continue
+        with _lock:
+            _st.update(**updates)
+
+    async def ui_loop():
+        while True:
+            await asyncio.sleep(UI_TICK)
+            with _lock:
+                if not _st["changed"]:
+                    continue
+                snap = dict(_st)
+                _st["changed"] = False
+
+            lan_badge_txt.value = f"LAN {snap['d_ms']} ms" if snap["d_ok"] else "LAN --"
+            set_status_badge(lan_badge_box, lan_badge_txt,
+                             "on" if snap["d_ok"] else "off")
+            srv_badge_txt.value = f"SERVER {snap['s_ms']} ms" if snap["s_ok"] else "SERVER --"
+            set_status_badge(srv_badge_box, srv_badge_txt,
+                             "accent" if snap["s_ok"] else "off")
+
+            mode = _mode[0]
+            if mode == "direct":
+                data = snap["d_data"]
+            elif mode == "server":
+                data = snap["s_data"]
+            else:
+                data = snap["d_data"] if snap["d_ok"] else snap["s_data"]
+
+            if data:
+                header_dot.bgcolor = C_ON
+                header_ip.value = str(data.get("ip", "--"))
+                fw = str(data.get("firmware", ""))
+                header_fw.value = f"v{fw.replace('v', '')}" if fw else ""
+                _render_meta_tiles(data)
+                _render_io_tiles(data)
+            else:
+                header_dot.bgcolor = C_WARN
+                header_ip.value = "disconnected"
+                header_fw.value = ""
+
+            _refresh_door_controls(snap)
+
+            err = ""
+            if mode == "direct" and not snap["d_ok"]:
+                err = snap["d_err"]
+            elif mode == "server" and not snap["s_ok"]:
+                err = snap["s_err"]
+            elif mode == "auto" and not snap["d_ok"] and not snap["s_ok"]:
+                err = snap["s_err"] or snap["d_err"]
+
+            if not err:
+                for side in MATTER_DOORS:
+                    p = key_prefix(side)
+                    if snap.get(f"{p}_err"):
+                        err = snap[f"{p}_err"]
+                        break
+
+            err_text.visible = bool(err)
+            err_text.value = err
+            page.update()
+
+    threading.Thread(target=fetch_direct, daemon=True).start()
+    threading.Thread(target=fetch_server, daemon=True).start()
+    threading.Thread(target=fetch_matter, daemon=True).start()
+    threading.Thread(target=enforce_off_default_once, daemon=True).start()
+    page.run_task(ui_loop)
+
+
+ft.app(target=main, view=ft.AppView.WEB_BROWSER, host="0.0.0.0", port=8550)
+</file>
+
+<file path="ops/pi/cleanup_nonessential.sh">
+#!/usr/bin/env bash
+set -euo pipefail
+
+PURGE_HEADSCALE="${1:-no}"
+
+echo "Disabling/removing non-essential services requested by operator"
+
+echo "- headscale.service"
+if systemctl list-unit-files | grep -Eq '^headscale\.service[[:space:]]'; then
+  sudo systemctl disable --now headscale.service || true
+  sudo systemctl mask headscale.service || true
+  if [[ "${PURGE_HEADSCALE}" == "purge-headscale" ]]; then
+    sudo apt-get purge -y headscale || true
+    sudo apt-get autoremove -y || true
+  fi
+else
+  echo "  headscale.service not installed"
+fi
+
+if [[ -L /etc/nginx/sites-enabled/headscale ]]; then
+  sudo rm -f /etc/nginx/sites-enabled/headscale
+  echo "  removed nginx headscale site symlink"
+fi
+
+if [[ -L /etc/nginx/sites-enabled/neugarden ]]; then
+  sudo rm -f /etc/nginx/sites-enabled/neugarden
+  echo "  removed legacy nginx neugarden symlink"
+fi
+
+echo "- wg-quick@wg0.service"
+sudo systemctl disable --now wg-quick@wg0.service || true
+sudo systemctl mask wg-quick@wg0.service || true
+sudo systemctl reset-failed wg-quick@wg0.service || true
+
+echo "- Optional stale WireGuard config"
+if [[ -f /etc/wireguard/wg0.conf ]]; then
+  sudo mv /etc/wireguard/wg0.conf /etc/wireguard/wg0.conf.disabled.$(date +%Y%m%d%H%M%S)
+  echo "  moved wg0.conf to disabled backup"
+fi
+
+echo "Completed cleanup"
+</file>
+
+<file path="ops/pi/deploy.py">
+#!/usr/bin/env python3
+"""Repo-first Pi deployment over SSH.
+
+- Bundles this repo while excluding local heavy/generated directories.
+- Uploads archive to remote host via scp.
+- Extracts into remote project path.
+- Optionally runs cleanup for non-essential services.
+- Runs provision script to apply service and nginx from repo.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import subprocess
+import tarfile
+import tempfile
+from pathlib import Path
+
+EXCLUDES = {
+    ".git",
+    ".venv",
+    "__pycache__",
+    "build",
+    "site-packages",
+    ".pytest_cache",
+}
+
+
+def run(cmd: list[str]) -> None:
+    print("+", " ".join(cmd))
+    subprocess.run(cmd, check=True)
+
+
+def should_include(path: Path, repo_root: Path) -> bool:
+    rel = path.relative_to(repo_root)
+    parts = set(rel.parts)
+    return not any(part in EXCLUDES for part in parts)
+
+
+def build_archive(repo_root: Path) -> Path:
+    fd, tmp_name = tempfile.mkstemp(prefix="py_app_", suffix=".tar.gz")
+    os.close(fd)
+    archive_path = Path(tmp_name)
+
+    with tarfile.open(archive_path, "w:gz") as tar:
+        for path in repo_root.rglob("*"):
+            if not should_include(path, repo_root):
+                continue
+            rel = path.relative_to(repo_root)
+            tar.add(path, arcname=str(rel), recursive=False)
+    return archive_path
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Deploy py_app to Raspberry Pi over SSH")
+    parser.add_argument("--ssh-target", default="rpi3",
+                        help="SSH host alias (default: rpi3)")
+    parser.add_argument(
+        "--project-path",
+        default="/home/neulas/projects/py_app",
+        help="Remote project path",
+    )
+    parser.add_argument(
+        "--cleanup-nonessential",
+        action="store_true",
+        help="Run remote cleanup_nonessential.sh (headscale + wg0)",
+    )
+    parser.add_argument(
+        "--purge-headscale",
+        action="store_true",
+        help="When cleanup is enabled, purge headscale package too",
+    )
+    parser.add_argument(
+        "--quick",
+        action="store_true",
+        help="Fast deploy mode: skip apt refresh and heavy dependency reinstall",
+    )
+    args = parser.parse_args()
+
+    repo_root = Path(__file__).resolve().parents[2]
+    archive_path = build_archive(repo_root)
+    remote_archive = "/tmp/py_app_bundle.tar.gz"
+
+    try:
+        run(["ssh", args.ssh_target, f"mkdir -p {args.project_path}"])
+        run(["scp", str(archive_path), f"{args.ssh_target}:{remote_archive}"])
+        run(
+            [
+                "ssh",
+                args.ssh_target,
+                (
+                    f"tar -xzf {remote_archive} -C {args.project_path} "
+                    "&& rm -f /tmp/py_app_bundle.tar.gz "
+                    f"&& chmod +x {args.project_path}/ops/pi/*.sh"
+                ),
+            ]
+        )
+
+        if args.cleanup_nonessential:
+            cleanup_arg = "purge-headscale" if args.purge_headscale else "no"
+            run(
+                [
+                    "ssh",
+                    args.ssh_target,
+                    f"bash {args.project_path}/ops/pi/cleanup_nonessential.sh {cleanup_arg}",
+                ]
+            )
+
+        run(
+            [
+                "ssh",
+                args.ssh_target,
+                (
+                    f"bash {args.project_path}/ops/pi/provision_remote.sh "
+                    f"{args.project_path} {'quick' if args.quick else 'full'}"
+                ),
+            ]
+        )
+
+        run(
+            [
+                "ssh",
+                args.ssh_target,
+                f"bash {args.project_path}/ops/pi/statuscheck_remote.sh",
+            ]
+        )
+    finally:
+        archive_path.unlink(missing_ok=True)
+
+
+if __name__ == "__main__":
+    main()
+</file>
+
+<file path="ops/pi/nginx/py-app-dashboard.conf">
+server {
+    listen 80;
+    listen [::]:80;
+    server_name _;
+
+    location / {
+        proxy_pass http://127.0.0.1:8550;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+    }
+}
+</file>
+
+<file path="ops/pi/provision_remote.sh">
+#!/usr/bin/env bash
+set -euo pipefail
+
+PROJECT_PATH="${1:-/home/neulas/projects/py_app}"
+DEPLOY_MODE="${2:-full}"
+SERVICE_NAME="py-app-dashboard.service"
+
+echo "[1/8] Validating project path: ${PROJECT_PATH}"
+if [[ ! -d "${PROJECT_PATH}" ]]; then
+  echo "Project path does not exist: ${PROJECT_PATH}" >&2
+  exit 1
+fi
+
+cd "${PROJECT_PATH}"
+
+if [[ "${DEPLOY_MODE}" == "quick" ]]; then
+  echo "[2/8] Quick mode: skipping apt package refresh"
+else
+  echo "[2/8] Installing minimal runtime packages"
+  sudo apt-get update -y
+  sudo apt-get install -y python3-venv python3-pip nginx tailscale
+fi
+
+echo "[3/8] Creating/updating venv"
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+if [[ "${DEPLOY_MODE}" == "quick" ]]; then
+  echo "Quick mode: refreshing app package only"
+  pip install --no-deps .
+else
+  pip install --upgrade --force-reinstall \
+    "flet==0.28.3" \
+    "flet-web==0.28.3" \
+    "flet-cli==0.28.3"
+  pip uninstall -y flet-desktop || true
+  pip install .
+fi
+
+echo "[4/8] Installing systemd service from repo"
+sudo cp "${PROJECT_PATH}/ops/pi/systemd/${SERVICE_NAME}" "/etc/systemd/system/${SERVICE_NAME}"
+sudo systemctl daemon-reload
+sudo systemctl enable "${SERVICE_NAME}"
+sudo systemctl restart "${SERVICE_NAME}"
+
+echo "[5/8] Installing nginx site from repo"
+sudo cp "${PROJECT_PATH}/ops/pi/nginx/py-app-dashboard.conf" /etc/nginx/sites-available/py-app-dashboard.conf
+sudo ln -sfn /etc/nginx/sites-available/py-app-dashboard.conf /etc/nginx/sites-enabled/py-app-dashboard.conf
+
+if [[ -f /etc/nginx/sites-enabled/default ]]; then
+  sudo rm -f /etc/nginx/sites-enabled/default
+fi
+if [[ -f /etc/nginx/sites-enabled/headscale ]]; then
+  sudo rm -f /etc/nginx/sites-enabled/headscale
+fi
+
+sudo nginx -t
+sudo systemctl enable --now nginx
+sudo systemctl reload nginx
+
+echo "[6/8] Verifying dashboard and proxy"
+curl -sS -I http://127.0.0.1:8550 | head -n 1 || true
+curl -sS -I http://127.0.0.1 | head -n 1 || true
+
+echo "[7/8] Service summary"
+sudo systemctl --no-pager --full status "${SERVICE_NAME}" | sed -n '1,20p'
+sudo systemctl --no-pager --full status nginx | sed -n '1,20p'
+
+echo "[8/8] Completed"
+</file>
+
+<file path="ops/pi/statuscheck_remote.sh">
+#!/usr/bin/env bash
+set -euo pipefail
+
+SERVICE_NAME="py-app-dashboard.service"
+
+echo "=== HOST ==="
+hostnamectl | sed -n '1,12p'
+
+echo ""
+echo "=== DASHBOARD SERVICE ==="
+sudo systemctl --no-pager --full status "${SERVICE_NAME}" | sed -n '1,30p'
+
+echo ""
+echo "=== NGINX ==="
+sudo systemctl --no-pager --full status nginx | sed -n '1,20p'
+
+echo ""
+echo "=== TAILSCALE ==="
+sudo systemctl --no-pager --full status tailscaled.service | sed -n '1,20p'
+
+echo ""
+echo "=== PORTS ==="
+sudo ss -ltnp | egrep ':(80|443|8550|5580)\b' || true
+
+echo ""
+echo "=== LOCAL HTTP PROBES ==="
+curl -sS -I http://127.0.0.1:8550 | head -n 1 || true
+curl -sS -I http://127.0.0.1 | head -n 1 || true
+
+echo ""
+echo "=== FAILED UNITS ==="
+systemctl --failed --no-pager || true
+
+echo ""
+echo "=== TAILSCALE STATUS ==="
+tailscale status || true
+</file>
+
+<file path="ops/pi/systemd/py-app-dashboard.service">
+[Unit]
+Description=Py App Dashboard (Flet Web)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=neulas
+Group=neulas
+WorkingDirectory=/home/neulas/projects/py_app
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/neulas/projects/py_app/.venv/bin/python /home/neulas/projects/py_app/main.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+</file>
+
+<file path="pyproject.toml">
+[project]
+name = "py-app"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "flet==0.28.3",
+    "flet-web==0.28.3",
+    "requests>=2.32.0",
+    "websocket-client>=1.8.0",
+]
+
+[dependency-groups]
+dev = [
+    "flet-cli==0.28.3",
+]
+</file>
+
+<file path="README.md">
+# py_app Pi3 Dashboard Stack
+
+This repository is now the single source of truth for:
+
+- Production dashboard code.
+- Pi3 deployment and cleanup scripts.
+- Service configuration (systemd + nginx).
+- Runtime status checks and troubleshooting workflow.
+
+The stack is designed to stay lightweight and Pi-friendly:
+
+- Python app process for dashboard.
+- systemd for startup/restart.
+- nginx as reverse proxy on port 80.
+- tailscale kept active for remote admin and compatibility.
+- matter-server retained for garage device control.
+
+## Runtime pinning policy
+
+The dashboard runtime is pinned to:
+
+- flet 0.28.3
+- flet-web 0.28.3
+- flet-cli 0.28.3
+
+Reason:
+
+- Newer flet-web versions in this environment do not include packaged web runtime files (`flet_web/web`), which leads to HTTP 500 from the dashboard service.
+- 0.28.3 includes the required embedded web assets and is currently the stable Pi3 baseline for this project.
+
+## Target architecture (Pi3)
+
+```mermaid
+flowchart LR
+		C[LAN Browser] --> N[nginx :80]
+		T[Tailscale Client] --> N
+		N --> D[Flet Dashboard :8550]
+		D --> M[Matter Server :5580/ws]
+```
+
+## Canonical runtime locations on Pi
+
+- Project root: `/home/neulas/projects/py_app`
+- Python venv: `/home/neulas/projects/py_app/.venv`
+- Dashboard service unit: `/etc/systemd/system/py-app-dashboard.service`
+- nginx site file: `/etc/nginx/sites-available/py-app-dashboard.conf`
+- nginx enabled link: `/etc/nginx/sites-enabled/py-app-dashboard.conf`
+
+## Repo operations directory
+
+- `ops/pi/deploy.py`
+	- SSH deploy entrypoint from your development machine.
+	- Bundles this repo and applies remote provisioning.
+- `ops/pi/provision_remote.sh`
+	- Installs runtime dependencies.
+	- Creates/updates venv and installs Python package.
+	- Installs systemd and nginx config from repo.
+- `ops/pi/cleanup_nonessential.sh`
+	- Stops/disables/masks non-essential services requested for cleanup.
+	- Handles headscale and wg-quick@wg0.
+- `ops/pi/statuscheck_remote.sh`
+	- Full runtime check for dashboard/nginx/tailscale/ports/http.
+- `ops/pi/systemd/py-app-dashboard.service`
+	- Source-controlled service definition.
+- `ops/pi/nginx/py-app-dashboard.conf`
+	- Source-controlled reverse proxy config.
+
+## Access URLs
+
+- LAN URL (recommended for family):
+	- `http://192.168.1.95`
+- Direct app port (debug only):
+	- `http://192.168.1.95:8550`
+- Tailscale URL by tailnet IP:
+	- `http://100.123.208.10`
+
+If the Pi IP may change, set a DHCP reservation for the Pi in your router.
+
+## One command deploy over SSH
+
+From repo root on your development machine:
+
+```powershell
+python .\ops\pi\deploy.py --ssh-target rpi3 --project-path /home/neulas/projects/py_app --cleanup-nonessential
+```
+
+What this does:
+
+1. Bundles this repository while excluding heavy local folders (`.venv`, `build`, `site-packages`, `.git`).
+2. Uploads and extracts to the Pi project path.
+3. Cleans non-essential services (headscale + wg0) when requested.
+4. Re-applies service and nginx config from this repo.
+5. Runs status checks automatically.
+
+### Optional hard removal of headscale package
+
+```powershell
+python .\ops\pi\deploy.py --ssh-target rpi3 --project-path /home/neulas/projects/py_app --cleanup-nonessential --purge-headscale
+```
+
+Use `--purge-headscale` only if you are sure no device depends on this Pi-hosted headscale.
+
+## Manual remote operations
+
+Use these when you need direct control or forensic debugging.
+
+### Provision only
+
+```bash
+bash /home/neulas/projects/py_app/ops/pi/provision_remote.sh /home/neulas/projects/py_app
+```
+
+### Cleanup non-essential services only
+
+```bash
+bash /home/neulas/projects/py_app/ops/pi/cleanup_nonessential.sh no
+```
+
+### Full status check
+
+```bash
+bash /home/neulas/projects/py_app/ops/pi/statuscheck_remote.sh
+```
+
+## Service controls
+
+```bash
+sudo systemctl restart py-app-dashboard.service
+sudo systemctl status py-app-dashboard.service --no-pager --full
+sudo journalctl -u py-app-dashboard.service -n 200 --no-pager
+```
+
+## Nginx controls
+
+```bash
+sudo nginx -t
+sudo systemctl reload nginx
+sudo systemctl status nginx --no-pager --full
+```
+
+## Tailscale controls
+
+```bash
+sudo systemctl status tailscaled.service --no-pager --full
+tailscale status
+tailscale serve status
+tailscale funnel status
+```
+
+## Matter connectivity checks
+
+```bash
+sudo ss -ltnp | grep ':5580'
+```
+
+Dashboard code expects Matter websocket at:
+
+- `ws://192.168.1.95:5580/ws`
+
+If Matter host or port changes, update constants in `main.py` and redeploy.
+
+## Troubleshooting playbook
+
+### Symptom: service active but browser shows error
+
+1. Check direct app response:
+
+```bash
+curl -I http://127.0.0.1:8550
+```
+
+2. If you see HTTP 500, inspect app logs:
+
+```bash
+sudo journalctl -u py-app-dashboard.service -n 300 --no-pager
+```
+
+3. Confirm reverse proxy health:
+
+```bash
+curl -I http://127.0.0.1
+sudo tail -n 200 /var/log/nginx/error.log
+```
+
+4. Verify listeners:
+
+```bash
+sudo ss -ltnp | egrep ':(80|443|8550|5580)\b'
+```
+
+### Symptom: dashboard loads but doors do not trigger
+
+1. Check Matter server listener on 5580.
+2. Check dashboard logs for websocket command errors.
+3. Confirm right and left node IDs in `MATTER_DOORS` in `main.py`.
+
+## Cleanup policy used by this project
+
+Removed from active use:
+
+- Windows-only scheduled-task launcher workflow.
+- Windows fixed-IP runbook.
+- headscale service (disabled/masked in cleanup).
+- wg-quick@wg0 service (disabled/masked in cleanup).
+
+Kept as essential:
+
+- tailscaled service.
+- nginx reverse proxy.
+- py-app-dashboard systemd service.
+- matter-server process.
+
+## Cleanup scope and safety
+
+Automated cleanup removes or disables only components marked non-essential for this project runtime:
+
+- headscale service and optional package purge.
+- wg-quick@wg0 service disable/mask/reset-failed.
+- legacy nginx site symlinks related to old stack variants.
+
+If you later need headscale or WireGuard again, restore those services explicitly and remove the masks.
+
+## Development model
+
+- Develop in this repository only.
+- Deploy through SSH only (via `ops/pi/deploy.py`).
+- Keep all production config files under version control in this repo.
+- When diagnosing incidents, check this repo first for:
+	- Service definitions.
+	- Proxy configuration.
+	- Deployment flow.
+	- Statuscheck commands.
+</file>
+
+</files>
