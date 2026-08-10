@@ -11,6 +11,9 @@ dependencies = [
     "websocket-client>=1.8.0",
 ]
 
+[tool.setuptools.packages.find]
+include = ["app*"]
+
 [dependency-groups]
 dev = [
     "flet-cli==0.28.3",
