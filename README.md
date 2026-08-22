@@ -38,6 +38,34 @@ flowchart LR
 		D --> M[Matter Server :5580/ws]
 ```
 
+## Sensor history logging
+
+Water level and pressure readings from the PLC are logged to a local SQLite
+database for trend history:
+
+- `app/sensor_store.py` — `SensorDatabase`: SQLite (WAL mode) schema and raw
+  read/write/prune operations.
+- `app/sensor_logger.py` — `SensorLogger`: averages readings over a 5s window,
+  then batches the resulting means to disk every ~60s (limits SD card wear).
+- `app/sensor_chart.py` — `SensorChartControl`: canvas-based dual-axis chart
+  (water level in liters, pressure in bar) shown on the dashboard, refreshed
+  every 60s over a trailing 1-hour window.
+- Retention: rows older than 365 days are pruned automatically.
+- Database file: `data/sensor_log.db` (git-ignored, created on first run).
+
+### Exporting history
+
+```powershell
+python -m app.sensor_query --range 1h   # or 1d / 30d / max
+python -m app.sensor_query --range 30d --out history.csv
+```
+
+## Garage door control
+
+Garage doors are pulsed directly via the Matter `ACTIVATE` buttons once the
+Matter connection to a door node is online — there is no separate arm/unlock
+gesture gating activation.
+
 ## Canonical runtime locations on Pi
 
 - Project root: `/home/neulas/projects/py_app`

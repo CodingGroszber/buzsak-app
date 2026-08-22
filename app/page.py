@@ -20,6 +20,8 @@ from app.constants import (
     C_SURFACE,
     C_TEXT,
     C_WARN,
+    CHART_UPDATE_INTERVAL,
+    CHART_WINDOW_SECONDS,
     MATTER_CONNECT_RETRIES,
     MATTER_DOORS,
     MATTER_ENDPOINT_ID,
@@ -27,6 +29,10 @@ from app.constants import (
     MATTER_ONOFF_CLUSTER,
     MATTER_PULSE_SECONDS,
     MATTER_TIMEOUT,
+    LOG_DB_PATH,
+    LOG_FLUSH_INTERVAL,
+    LOG_RETENTION_DAYS,
+    LOG_WINDOW_SECONDS,
     MATTER_WS_URLS,
     PLC_DIRECT_URL,
     POLL_DIRECT,
@@ -37,7 +43,9 @@ from app.constants import (
 )
 from app.matter import MatterClient, MatterClientError
 from app.plc_view import render_io_tiles, render_meta_tiles
-from app.safety import DotUnlockControl
+from app.sensor_chart import SensorChartControl
+from app.sensor_logger import SensorLogger
+from app.sensor_store import SensorDatabase
 from app.ui_helpers import border_all, io_tile, make_status_badge, make_tile, set_status_badge
 
 
@@ -72,6 +80,7 @@ def build_page(page: ft.Page) -> None:
         "ml_ms": 0,
         "ml_on": False,
         "ml_err": "",
+        "chart_rows": [],
         "changed": True,
     }
     state_lock = threading.Lock()
@@ -83,6 +92,14 @@ def build_page(page: ft.Page) -> None:
         endpoint_id=MATTER_ENDPOINT_ID,
         onoff_cluster=MATTER_ONOFF_CLUSTER,
     )
+    sensor_db = SensorDatabase(LOG_DB_PATH)
+    sensor_logger = SensorLogger(
+        db=sensor_db,
+        window_seconds=LOG_WINDOW_SECONDS,
+        flush_interval=LOG_FLUSH_INTERVAL,
+        retention_days=LOG_RETENTION_DAYS,
+    )
+    sensor_chart = SensorChartControl()
 
     header_dot = ft.Container(
         width=8, height=8, border_radius=4, bgcolor=C_WARN)
@@ -93,19 +110,6 @@ def build_page(page: ft.Page) -> None:
     header_fw = ft.Text("v--", size=11, color=C_DIM)
     header_latency = ft.Text("-- ms", size=10, color=C_DIM)
     err_text = ft.Text("", size=11, color=C_WARN, visible=False)
-
-    rc_label = ft.Text("REMOTE ARM", size=11, color=C_TEXT,
-                       weight=ft.FontWeight.BOLD)
-    arm_badge_box, arm_badge_txt = make_status_badge("LOCKED", "off")
-
-    def _on_arm_change(armed: bool) -> None:
-        set_status_badge(arm_badge_box, arm_badge_txt,
-                         "on" if armed else "off")
-        arm_badge_txt.value = "ARMED" if armed else "LOCKED"
-        with state_lock:
-            state["changed"] = True
-
-    dot_unlock = DotUnlockControl(on_arm=_on_arm_change, page=page)
 
     door_refs: dict[str, DoorUIRefs] = {}
     door_tiles_row = ft.ResponsiveRow(spacing=6, run_spacing=6)
@@ -177,9 +181,17 @@ def build_page(page: ft.Page) -> None:
         pad=12,
         border_color="#2c2c2c",
     )
+    chart_tile = make_tile(
+        "HISTORY (1H)",
+        sensor_chart.control,
+        col=12,
+        title_size=11,
+        pad=12,
+        border_color="#2c2c2c",
+    )
     plc_section = make_tile(
         "PLC",
-        ft.Column([meta_row, switch_tile, outputs_row], spacing=8),
+        ft.Column([meta_row, chart_tile, switch_tile, outputs_row], spacing=8),
         col=12,
         title_size=11,
         pad=12,
@@ -233,14 +245,7 @@ def build_page(page: ft.Page) -> None:
                 border=border_all(1, C_BORDER),
                 border_radius=6,
                 padding=10,
-                content=ft.Column(
-                    [
-                        ft.Row([rc_label, arm_badge_box], spacing=10),
-                        ft.Row([dot_unlock.control], spacing=10),
-                        err_text,
-                    ],
-                    spacing=8,
-                ),
+                content=err_text,
             ),
             garage_section,
             plc_section,
@@ -257,9 +262,7 @@ def build_page(page: ft.Page) -> None:
             state["changed"] = True
 
     def pulse_door(side: str) -> None:
-        """Trigger a door pulse when safety arm allows it."""
-        if not dot_unlock.active:
-            return
+        """Trigger a door pulse."""
         node_id = MATTER_DOORS[side]["node_id"]
         prefix = key_prefix(side)
         try:
@@ -295,7 +298,7 @@ def build_page(page: ft.Page) -> None:
             ref = door_refs[side]
 
             ref.latency.value = f"{latency_ms} ms" if ok else "-- ms"
-            can_trigger = dot_unlock.active and ok
+            can_trigger = ok
             ref.activate_btn.disabled = not can_trigger
             ref.activate_btn.style = ft.ButtonStyle(
                 bgcolor="#14532d" if can_trigger else "#2a2a2a",
@@ -318,12 +321,8 @@ def build_page(page: ft.Page) -> None:
             else:
                 ref.state_txt.value = "OFF"
                 set_status_badge(ref.state_box, ref.state_txt, "on")
-                if dot_unlock.active:
-                    ref.hint.value = "Ready · 0.5s pulse"
-                    ref.hint.color = C_DIM
-                else:
-                    ref.hint.value = "Connect dots to enable"
-                    ref.hint.color = C_DIM
+                ref.hint.value = "Ready · 0.5s pulse"
+                ref.hint.color = C_DIM
 
     def fetch_direct() -> None:
         """Poll PLC HTTP endpoint and cache latest payload."""
@@ -336,6 +335,7 @@ def build_page(page: ft.Page) -> None:
                 with state_lock:
                     state.update(d_ok=True, d_ms=latency_ms,
                                  d_data=data, d_err="", changed=True)
+                sensor_logger.record(data)
             except (requests.RequestException, ValueError) as ex:
                 with state_lock:
                     state.update(d_ok=False, d_data=None,
@@ -397,6 +397,15 @@ def build_page(page: ft.Page) -> None:
         with state_lock:
             state.update(**updates)
 
+    def fetch_chart_data() -> None:
+        """Periodically refresh the trailing chart window from stored history."""
+        while True:
+            since_ts = time.time() - CHART_WINDOW_SECONDS
+            rows = sensor_db.query_since(since_ts)
+            with state_lock:
+                state.update(chart_rows=rows, changed=True)
+            time.sleep(CHART_UPDATE_INTERVAL)
+
     async def ui_loop() -> None:
         """Render periodic updates onto page controls when state changes."""
         while True:
@@ -438,6 +447,7 @@ def build_page(page: ft.Page) -> None:
                 header_fw.value = ""
 
             refresh_door_controls(snapshot)
+            sensor_chart.update_data(snapshot.get("chart_rows", []))
 
             error_message = ""
             if not snapshot["d_ok"]:
@@ -457,4 +467,5 @@ def build_page(page: ft.Page) -> None:
     threading.Thread(target=fetch_direct, daemon=True).start()
     threading.Thread(target=fetch_matter, daemon=True).start()
     threading.Thread(target=enforce_off_default_once, daemon=True).start()
+    threading.Thread(target=fetch_chart_data, daemon=True).start()
     page.run_task(ui_loop)

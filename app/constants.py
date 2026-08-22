@@ -2,12 +2,24 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 PLC_DIRECT_URL = "http://192.168.1.94/api/state"
 
 TIMEOUT_DIRECT = 0.4
 POLL_DIRECT = 0.5
 POLL_MATTER = 1.0
 UI_TICK = 0.35
+
+# Sensor history logging (SQLite, batched writes to limit SD card wear).
+LOG_DB_PATH = Path(__file__).resolve().parent.parent / "data" / "sensor_log.db"
+LOG_WINDOW_SECONDS = 5.0  # readings are averaged over this window before logging
+LOG_FLUSH_INTERVAL = 60.0  # seconds between batched disk writes
+LOG_RETENTION_DAYS = 365
+
+# History chart display window.
+CHART_WINDOW_SECONDS = 3600.0  # trailing window of history shown on the chart
+CHART_UPDATE_INTERVAL = 60.0  # seconds between chart refreshes
 
 # Prefer local loopback on the Pi; fallback to LAN IP if routes shift.
 MATTER_WS_URLS = (
