@@ -29,7 +29,8 @@ class SensorDatabase:
         with self._connect() as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute(_SCHEMA)
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_readings_ts ON readings(ts)")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_readings_ts ON readings(ts)")
 
     def _connect(self) -> sqlite3.Connection:
         return sqlite3.connect(self._db_path, timeout=5.0)

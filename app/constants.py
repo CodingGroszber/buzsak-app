@@ -18,8 +18,17 @@ LOG_FLUSH_INTERVAL = 60.0  # seconds between batched disk writes
 LOG_RETENTION_DAYS = 365
 
 # History chart display window.
-CHART_WINDOW_SECONDS = 3600.0  # trailing window of history shown on the chart
 CHART_UPDATE_INTERVAL = 60.0  # seconds between chart refreshes
+# Selectable trailing windows shown on the chart: (button label, seconds).
+# A seconds value of None means "MAX" — show every stored measurement.
+CHART_RANGE_OPTIONS = (
+    ("1H", 3600.0),
+    ("1D", 86400.0),
+    ("1W", 7 * 86400.0),
+    ("1M", 30 * 86400.0),
+    ("MAX", None),
+)
+CHART_WINDOW_SECONDS = CHART_RANGE_OPTIONS[0][1]  # default trailing window
 
 # Prefer local loopback on the Pi; fallback to LAN IP if routes shift.
 MATTER_WS_URLS = (

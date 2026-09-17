@@ -24,7 +24,8 @@ def _extract_pressure(data: dict) -> float | None:
 
 
 def _extract_water_level(data: dict) -> float | None:
-    value = pick_analog_metric(data, "water_level", ["liters", "value", "level"])
+    value = pick_analog_metric(data, "water_level", [
+                               "liters", "value", "level"])
     if value == "--":
         value = pick_metric(
             data,
@@ -77,7 +78,8 @@ class SensorLogger:
         if self._window_samples:
             pressures = [p for p, _ in self._window_samples if p is not None]
             levels = [w for _, w in self._window_samples if w is not None]
-            mean_pressure = sum(pressures) / len(pressures) if pressures else None
+            mean_pressure = sum(pressures) / \
+                len(pressures) if pressures else None
             mean_level = sum(levels) / len(levels) if levels else None
             self._buffer.append((time.time(), mean_pressure, mean_level))
         self._window_samples = []

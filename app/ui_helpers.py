@@ -68,6 +68,7 @@ def make_tile(
                 content,
             ],
             spacing=6,
+            horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
         ),
     )
 

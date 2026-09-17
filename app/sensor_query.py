@@ -29,7 +29,8 @@ def fetch_range(db: SensorDatabase, range_key: str) -> list[Row]:
     if range_key == "max":
         return db.query_all()
     if range_key not in RANGE_SECONDS:
-        raise ValueError(f"Unknown range: {range_key!r} (expected 1h, 1d, 30d, or max)")
+        raise ValueError(
+            f"Unknown range: {range_key!r} (expected 1h, 1d, 30d, or max)")
     since_ts = time.time() - RANGE_SECONDS[range_key]
     return db.query_since(since_ts)
 
@@ -43,10 +44,12 @@ def _write_csv(rows: list[Row], out: TextIO) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Export logged sensor history as CSV")
+    parser = argparse.ArgumentParser(
+        description="Export logged sensor history as CSV")
     parser.add_argument("--range", choices=RANGE_CHOICES, default="1d",
                         help="Time window to export (default: 1d)")
-    parser.add_argument("--out", help="Output CSV file path (defaults to stdout)")
+    parser.add_argument(
+        "--out", help="Output CSV file path (defaults to stdout)")
     args = parser.parse_args()
 
     db = SensorDatabase(LOG_DB_PATH)

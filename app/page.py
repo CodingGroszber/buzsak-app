@@ -20,8 +20,8 @@ from app.constants import (
     C_SURFACE,
     C_TEXT,
     C_WARN,
+    CHART_RANGE_OPTIONS,
     CHART_UPDATE_INTERVAL,
-    CHART_WINDOW_SECONDS,
     MATTER_CONNECT_RETRIES,
     MATTER_DOORS,
     MATTER_ENDPOINT_ID,
@@ -81,9 +81,12 @@ def build_page(page: ft.Page) -> None:
         "ml_on": False,
         "ml_err": "",
         "chart_rows": [],
+        "chart_changed": True,
+        "chart_range_seconds": CHART_RANGE_OPTIONS[0][1],
         "changed": True,
     }
     state_lock = threading.Lock()
+    chart_range_event = threading.Event()
 
     matter_client = MatterClient(
         urls=MATTER_WS_URLS,
@@ -181,17 +184,57 @@ def build_page(page: ft.Page) -> None:
         pad=12,
         border_color="#2c2c2c",
     )
-    chart_tile = make_tile(
-        "HISTORY (1H)",
-        sensor_chart.control,
-        col=12,
-        title_size=11,
-        pad=12,
-        border_color="#2c2c2c",
+    chart_range_controls: list[tuple[float | None, ft.Container, ft.Text]] = []
+
+    def select_chart_range(seconds: float | None) -> None:
+        """Switch the chart's trailing window and trigger an immediate refresh."""
+        with state_lock:
+            state["chart_range_seconds"] = seconds
+        for opt_seconds, box, txt in chart_range_controls:
+            set_status_badge(
+                box, txt, "accent" if opt_seconds == seconds else "off")
+        chart_range_event.set()
+        page.update()
+
+    def make_range_button(label: str, seconds: float | None, active: bool) -> ft.Container:
+        box, txt = make_status_badge(label, "accent" if active else "off")
+        box.on_click = lambda e, s=seconds: select_chart_range(s)
+        chart_range_controls.append((seconds, box, txt))
+        return box
+
+    chart_header = ft.Row(
+        [
+            ft.Text("HISTORY", size=11, color=C_DIM,
+                    weight=ft.FontWeight.BOLD),
+            ft.Row(
+                [
+                    make_range_button(label, seconds, index == 0)
+                    for index, (label, seconds) in enumerate(CHART_RANGE_OPTIONS)
+                ],
+                spacing=6,
+            ),
+        ],
+        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+    )
+    chart_tile = ft.Container(
+        col={"xs": 12, "sm": 12, "md": 12, "lg": 12},
+        bgcolor=C_SURFACE,
+        border=border_all(1, "#2c2c2c"),
+        border_radius=6,
+        padding=12,
+        content=ft.Column(
+            [chart_header, sensor_chart.control],
+            spacing=6,
+            horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
+        ),
     )
     plc_section = make_tile(
         "PLC",
-        ft.Column([meta_row, chart_tile, switch_tile, outputs_row], spacing=8),
+        ft.Column(
+            [meta_row, chart_tile, switch_tile, outputs_row],
+            spacing=8,
+            horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
+        ),
         col=12,
         title_size=11,
         pad=12,
@@ -398,13 +441,19 @@ def build_page(page: ft.Page) -> None:
             state.update(**updates)
 
     def fetch_chart_data() -> None:
-        """Periodically refresh the trailing chart window from stored history."""
+        """Refresh the selected trailing chart window from stored history."""
         while True:
-            since_ts = time.time() - CHART_WINDOW_SECONDS
-            rows = sensor_db.query_since(since_ts)
             with state_lock:
-                state.update(chart_rows=rows, changed=True)
-            time.sleep(CHART_UPDATE_INTERVAL)
+                range_seconds = state["chart_range_seconds"]
+            if range_seconds is None:
+                rows = sensor_db.query_all()
+            else:
+                since_ts = time.time() - range_seconds
+                rows = sensor_db.query_since(since_ts)
+            with state_lock:
+                state.update(chart_rows=rows, chart_changed=True, changed=True)
+            chart_range_event.wait(CHART_UPDATE_INTERVAL)
+            chart_range_event.clear()
 
     async def ui_loop() -> None:
         """Render periodic updates onto page controls when state changes."""
@@ -415,6 +464,8 @@ def build_page(page: ft.Page) -> None:
                     continue
                 snapshot = dict(state)
                 state["changed"] = False
+                if snapshot.get("chart_changed"):
+                    state["chart_changed"] = False
 
             data = snapshot["d_data"]
             matter_ok = bool(snapshot.get("mr_ok") or snapshot.get("ml_ok"))
@@ -447,7 +498,8 @@ def build_page(page: ft.Page) -> None:
                 header_fw.value = ""
 
             refresh_door_controls(snapshot)
-            sensor_chart.update_data(snapshot.get("chart_rows", []))
+            if snapshot.get("chart_changed"):
+                sensor_chart.update_data(snapshot.get("chart_rows", []))
 
             error_message = ""
             if not snapshot["d_ok"]:
