@@ -1,0 +1,36 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Build outputs and signing material (BLD-12, SEC-04)
+*.apk
+*.aab
+*.jks
+*.keystore
+key.properties
+.env
+.env.*
+!.env.example
+
+# Local-only secret inventory and credential material (SEC-04)
+/secrets.md
+/secrets.local.md
+*.token
+*.secret
+*credentials*.json
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+.flet/

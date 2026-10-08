@@ -1,0 +1,42 @@
+[project]
+name = "buzsak-app"
+version = "0.1.0"
+description = "Android client for the Buzsák garden telemetry and command server"
+readme = "README.md"
+# <3.13: flet build bundles the highest Python the range allows, so this keeps dev and APK on 3.12.
+requires-python = ">=3.11,<3.13"
+# flet build ignores uv.lock and reads these, so runtime deps must be pinned exactly here (BLD-10).
+dependencies = [
+    "flet==1.0.3",
+    "httpx==0.28.1",
+]
+
+[dependency-groups]
+dev = [
+    "flet-cli==1.0.3",
+    "flet-desktop==1.0.3",
+    "pytest>=8",
+]
+
+[tool.uv]
+# Hardlinks fail on this machine's OneDrive/cloud-filtered profile (os error 396).
+link-mode = "copy"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.flet]
+product = "Buzsák"
+org = "hu.buzsak"
+
+[tool.flet.app]
+path = "src"
+
+# Cleartext is retained for the local HTTP fake API only (SEC-01, ADR-0002/0003).
+[tool.flet.android.manifest_application]
+usesCleartextTraffic = "true"
+
+[build-system]
+requires = ["uv_build>=0.12.5,<0.13.0"]
+build-backend = "uv_build"

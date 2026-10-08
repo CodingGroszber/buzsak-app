@@ -1,0 +1,148 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "buzsak: doctor",
+            "type": "shell",
+            "command": "pwsh",
+            "args": [
+                "-NoProfile",
+                "-File",
+                "${workspaceFolder}/scripts/doctor.ps1"
+            ],
+            "problemMatcher": []
+        },
+        {
+            "label": "buzsak: dev (desktop hot reload)",
+            "type": "shell",
+            "command": "pwsh",
+            "args": [
+                "-NoProfile",
+                "-File",
+                "${workspaceFolder}/scripts/dev.ps1"
+            ],
+            "isBackground": true,
+            "problemMatcher": []
+        },
+        {
+            "label": "buzsak: preview (fake server + desktop app)",
+            "type": "shell",
+            "command": "pwsh",
+            "args": [
+                "-NoProfile",
+                "-File",
+                "${workspaceFolder}/scripts/dev.ps1",
+                "-FakeServer"
+            ],
+            "isBackground": true,
+            "problemMatcher": []
+        },
+        {
+            "label": "buzsak: live desktop (operator session)",
+            "type": "shell",
+            "command": "pwsh",
+            "args": [
+                "-NoProfile",
+                "-File",
+                "${workspaceFolder}/scripts/dev.ps1",
+                "-LiveServer"
+            ],
+            "isBackground": true,
+            "problemMatcher": []
+        },
+        {
+            "label": "buzsak: emulator (start)",
+            "type": "shell",
+            "command": "pwsh",
+            "args": [
+                "-NoProfile",
+                "-File",
+                "${workspaceFolder}/scripts/emulator.ps1"
+            ],
+            "problemMatcher": []
+        },
+        {
+            "label": "buzsak: device (live run)",
+            "type": "shell",
+            "command": "pwsh",
+            "args": [
+                "-NoProfile",
+                "-File",
+                "${workspaceFolder}/scripts/device.ps1"
+            ],
+            "isBackground": true,
+            "problemMatcher": []
+        },
+        {
+            "label": "buzsak: build APK",
+            "type": "shell",
+            "command": "pwsh",
+            "args": [
+                "-NoProfile",
+                "-File",
+                "${workspaceFolder}/scripts/build-debug.ps1"
+            ],
+            "group": "build",
+            "problemMatcher": []
+        },
+        {
+            "label": "buzsak: install APK",
+            "type": "shell",
+            "command": "pwsh",
+            "args": [
+                "-NoProfile",
+                "-File",
+                "${workspaceFolder}/scripts/install.ps1"
+            ],
+            "problemMatcher": []
+        },
+        {
+            "label": "buzsak: deploy (build + install + launch)",
+            "type": "shell",
+            "command": "pwsh",
+            "args": [
+                "-NoProfile",
+                "-File",
+                "${workspaceFolder}/scripts/deploy.ps1"
+            ],
+            "problemMatcher": []
+        },
+        {
+            "label": "buzsak: logs (follow)",
+            "type": "shell",
+            "command": "pwsh",
+            "args": [
+                "-NoProfile",
+                "-File",
+                "${workspaceFolder}/scripts/logs.ps1",
+                "-Clear"
+            ],
+            "isBackground": true,
+            "problemMatcher": []
+        },
+        {
+            "label": "buzsak: test",
+            "type": "shell",
+            "command": "uv",
+            "args": [
+                "run",
+                "pytest",
+                "-q"
+            ],
+            "group": "test",
+            "problemMatcher": []
+        },
+        {
+            "label": "buzsak: fake server (normal)",
+            "type": "shell",
+            "command": "pwsh",
+            "args": [
+                "-NoProfile",
+                "-File",
+                "${workspaceFolder}/scripts/fake-server.ps1"
+            ],
+            "isBackground": true,
+            "problemMatcher": []
+        }
+    ]
+}

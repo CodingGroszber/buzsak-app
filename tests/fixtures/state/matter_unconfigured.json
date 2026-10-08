@@ -1,0 +1,27 @@
+{
+    "generated_at": "2026-10-05T12:00:00Z",
+    "parties": [
+        {
+            "id": "garden_plc",
+            "label": "PUMP",
+            "kind": "garden_plc",
+            "configured": true,
+            "devices": []
+        },
+        {
+            "id": "valve_controller",
+            "label": "GREENHOUSE",
+            "kind": "valve_controller",
+            "configured": true,
+            "devices": []
+        },
+        {
+            "id": "matter",
+            "label": "GARAGE",
+            "kind": "matter",
+            "configured": false,
+            "devices": [],
+            "note": "Not configured: Matter-server integration is deferred (DEV-08)."
+        }
+    ]
+}

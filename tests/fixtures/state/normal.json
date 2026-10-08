@@ -1,0 +1,489 @@
+{
+    "generated_at": "2026-10-05T12:00:00Z",
+    "parties": [
+        {
+            "id": "garden_plc",
+            "label": "PUMP",
+            "kind": "garden_plc",
+            "configured": true,
+            "devices": [
+                {
+                    "id": "garden-plc",
+                    "label": "garden-plc",
+                    "address": "http://192.0.2.94/",
+                    "enabled": true,
+                    "health": {
+                        "status": "healthy",
+                        "last_success_at": "2026-10-05T11:59:59Z",
+                        "last_error": null,
+                        "consecutive_failures": 0
+                    },
+                    "parameters": [
+                        {
+                            "id": "left_sw",
+                            "category": "boolean",
+                            "unit": null,
+                            "value": "false",
+                            "value_type": "bool",
+                            "quality": "good",
+                            "stale": false,
+                            "observed_at": "2026-10-05T11:59:59Z",
+                            "last_changed_at": "2026-10-05T08:12:03Z",
+                            "revision": 4,
+                            "has_data": true
+                        },
+                        {
+                            "id": "pressure_bar",
+                            "category": "continuous",
+                            "unit": "bar",
+                            "value": "2.8",
+                            "value_type": "float",
+                            "quality": "good",
+                            "stale": false,
+                            "observed_at": "2026-10-05T11:59:59Z",
+                            "last_changed_at": "2026-10-05T11:59:59Z",
+                            "revision": 1523,
+                            "has_data": true
+                        },
+                        {
+                            "id": "right_sw",
+                            "category": "boolean",
+                            "unit": null,
+                            "value": "false",
+                            "value_type": "bool",
+                            "quality": "good",
+                            "stale": false,
+                            "observed_at": "2026-10-05T11:59:59Z",
+                            "last_changed_at": "2026-10-05T08:12:03Z",
+                            "revision": 4,
+                            "has_data": true
+                        },
+                        {
+                            "id": "switch_led",
+                            "category": "boolean",
+                            "unit": null,
+                            "value": "false",
+                            "value_type": "bool",
+                            "quality": "good",
+                            "stale": false,
+                            "observed_at": "2026-10-05T11:59:59Z",
+                            "last_changed_at": "2026-10-05T08:12:03Z",
+                            "revision": 2,
+                            "has_data": true
+                        },
+                        {
+                            "id": "tank_pump",
+                            "category": "boolean",
+                            "unit": null,
+                            "value": "true",
+                            "value_type": "bool",
+                            "quality": "good",
+                            "stale": false,
+                            "observed_at": "2026-10-05T11:59:59Z",
+                            "last_changed_at": "2026-10-05T11:20:41Z",
+                            "revision": 7,
+                            "has_data": true
+                        },
+                        {
+                            "id": "water_level_liters",
+                            "category": "continuous",
+                            "unit": "L",
+                            "value": "640.0",
+                            "value_type": "float",
+                            "quality": "good",
+                            "stale": false,
+                            "observed_at": "2026-10-05T11:59:59Z",
+                            "last_changed_at": "2026-10-05T11:59:59Z",
+                            "revision": 988,
+                            "has_data": true
+                        },
+                        {
+                            "id": "well_pump",
+                            "category": "boolean",
+                            "unit": null,
+                            "value": "false",
+                            "value_type": "bool",
+                            "quality": "good",
+                            "stale": false,
+                            "observed_at": "2026-10-05T11:59:59Z",
+                            "last_changed_at": "2026-10-05T11:20:40Z",
+                            "revision": 7,
+                            "has_data": true
+                        },
+                        {
+                            "id": "wifi_led",
+                            "category": "boolean",
+                            "unit": null,
+                            "value": "true",
+                            "value_type": "bool",
+                            "quality": "good",
+                            "stale": false,
+                            "observed_at": "2026-10-05T11:59:59Z",
+                            "last_changed_at": "2026-10-05T08:12:03Z",
+                            "revision": 1,
+                            "has_data": true
+                        }
+                    ],
+                    "capabilities": [
+                        {
+                            "action_id": "set_output",
+                            "params_schema": {
+                                "name": [
+                                    "well_pump",
+                                    "tank_pump"
+                                ],
+                                "state": "bool"
+                            },
+                            "enabled": false,
+                            "disabled_reason": "Read-only initial release (UI-06); command dispatch is not implemented yet."
+                        }
+                    ],
+                    "last_pulse": null
+                }
+            ]
+        },
+        {
+            "id": "valve_controller",
+            "label": "GREENHOUSE",
+            "kind": "valve_controller",
+            "configured": true,
+            "devices": [
+                {
+                    "id": "valve-controller",
+                    "label": "valve-controller",
+                    "address": "http://192.0.2.109/",
+                    "enabled": true,
+                    "health": {
+                        "status": "healthy",
+                        "last_success_at": "2026-10-05T11:59:59Z",
+                        "last_error": null,
+                        "consecutive_failures": 0
+                    },
+                    "parameters": [
+                        {
+                            "id": "automation_duty",
+                            "category": "continuous",
+                            "unit": "ratio",
+                            "value": "0.4",
+                            "value_type": "float",
+                            "quality": "good",
+                            "stale": false,
+                            "observed_at": "2026-10-05T11:59:59Z",
+                            "last_changed_at": "2026-10-05T11:50:00Z",
+                            "revision": 31,
+                            "has_data": true
+                        },
+                        {
+                            "id": "automation_elapsed_s",
+                            "category": "continuous",
+                            "unit": "s",
+                            "value": "187",
+                            "value_type": "int",
+                            "quality": "good",
+                            "stale": false,
+                            "observed_at": "2026-10-05T11:59:59Z",
+                            "last_changed_at": "2026-10-05T11:59:59Z",
+                            "revision": 2210,
+                            "has_data": true
+                        },
+                        {
+                            "id": "automation_period_s",
+                            "category": "configuration",
+                            "unit": "s",
+                            "value": "600",
+                            "value_type": "int",
+                            "quality": "good",
+                            "stale": false,
+                            "observed_at": "2026-10-05T11:59:59Z",
+                            "last_changed_at": "2026-10-05T08:00:00Z",
+                            "revision": 1,
+                            "has_data": true
+                        },
+                        {
+                            "id": "automation_sensor_valid",
+                            "category": "boolean",
+                            "unit": null,
+                            "value": "true",
+                            "value_type": "bool",
+                            "quality": "good",
+                            "stale": false,
+                            "observed_at": "2026-10-05T11:59:59Z",
+                            "last_changed_at": "2026-10-05T08:00:00Z",
+                            "revision": 1,
+                            "has_data": true
+                        },
+                        {
+                            "id": "automation_target_pct",
+                            "category": "continuous",
+                            "unit": "%",
+                            "value": "90.0",
+                            "value_type": "float",
+                            "quality": "good",
+                            "stale": false,
+                            "observed_at": "2026-10-05T11:59:59Z",
+                            "last_changed_at": "2026-10-05T08:00:00Z",
+                            "revision": 1,
+                            "has_data": true
+                        },
+                        {
+                            "id": "automation_time_synced",
+                            "category": "boolean",
+                            "unit": null,
+                            "value": "true",
+                            "value_type": "bool",
+                            "quality": "good",
+                            "stale": false,
+                            "observed_at": "2026-10-05T11:59:59Z",
+                            "last_changed_at": "2026-10-05T08:00:00Z",
+                            "revision": 1,
+                            "has_data": true
+                        },
+                        {
+                            "id": "automation_valve_on",
+                            "category": "boolean",
+                            "unit": null,
+                            "value": "true",
+                            "value_type": "bool",
+                            "quality": "good",
+                            "stale": false,
+                            "observed_at": "2026-10-05T11:59:59Z",
+                            "last_changed_at": "2026-10-05T11:50:00Z",
+                            "revision": 62,
+                            "has_data": true
+                        },
+                        {
+                            "id": "mode",
+                            "category": "configuration",
+                            "unit": null,
+                            "value": "automatic",
+                            "value_type": "string",
+                            "quality": "good",
+                            "stale": false,
+                            "observed_at": "2026-10-05T11:59:59Z",
+                            "last_changed_at": "2026-10-05T08:00:00Z",
+                            "revision": 1,
+                            "has_data": true
+                        },
+                        {
+                            "id": "relay1_mist",
+                            "category": "boolean",
+                            "unit": null,
+                            "value": "true",
+                            "value_type": "bool",
+                            "quality": "good",
+                            "stale": false,
+                            "observed_at": "2026-10-05T11:59:59Z",
+                            "last_changed_at": "2026-10-05T11:50:00Z",
+                            "revision": 62,
+                            "has_data": true
+                        },
+                        {
+                            "id": "relay2_rain",
+                            "category": "boolean",
+                            "unit": null,
+                            "value": "false",
+                            "value_type": "bool",
+                            "quality": "good",
+                            "stale": false,
+                            "observed_at": "2026-10-05T11:59:59Z",
+                            "last_changed_at": "2026-10-05T08:00:00Z",
+                            "revision": 1,
+                            "has_data": true
+                        },
+                        {
+                            "id": "relay3_drip",
+                            "category": "boolean",
+                            "unit": null,
+                            "value": "false",
+                            "value_type": "bool",
+                            "quality": "good",
+                            "stale": false,
+                            "observed_at": "2026-10-05T11:59:59Z",
+                            "last_changed_at": "2026-10-05T08:00:00Z",
+                            "revision": 1,
+                            "has_data": true
+                        },
+                        {
+                            "id": "relay4_light",
+                            "category": "boolean",
+                            "unit": null,
+                            "value": "false",
+                            "value_type": "bool",
+                            "quality": "good",
+                            "stale": false,
+                            "observed_at": "2026-10-05T11:59:59Z",
+                            "last_changed_at": "2026-10-05T08:00:00Z",
+                            "revision": 1,
+                            "has_data": true
+                        },
+                        {
+                            "id": "sensor_a_humidity_pct",
+                            "category": "continuous",
+                            "unit": "%",
+                            "value": "87.4",
+                            "value_type": "float",
+                            "quality": "good",
+                            "stale": false,
+                            "observed_at": "2026-10-05T11:59:59Z",
+                            "last_changed_at": "2026-10-05T11:59:59Z",
+                            "revision": 1804,
+                            "has_data": true
+                        },
+                        {
+                            "id": "sensor_a_temperature_c",
+                            "category": "continuous",
+                            "unit": "°C",
+                            "value": "21.6",
+                            "value_type": "float",
+                            "quality": "good",
+                            "stale": false,
+                            "observed_at": "2026-10-05T11:59:59Z",
+                            "last_changed_at": "2026-10-05T11:59:59Z",
+                            "revision": 905,
+                            "has_data": true
+                        },
+                        {
+                            "id": "sensor_b_humidity_pct",
+                            "category": "continuous",
+                            "unit": "%",
+                            "value": "85.0",
+                            "value_type": "float",
+                            "quality": "good",
+                            "stale": false,
+                            "observed_at": "2026-10-05T11:59:59Z",
+                            "last_changed_at": "2026-10-05T11:59:58Z",
+                            "revision": 1790,
+                            "has_data": true
+                        },
+                        {
+                            "id": "sensor_b_temperature_c",
+                            "category": "continuous",
+                            "unit": "°C",
+                            "value": "22.1",
+                            "value_type": "float",
+                            "quality": "good",
+                            "stale": false,
+                            "observed_at": "2026-10-05T11:59:59Z",
+                            "last_changed_at": "2026-10-05T11:59:50Z",
+                            "revision": 877,
+                            "has_data": true
+                        }
+                    ],
+                    "capabilities": [
+                        {
+                            "action_id": "set_mode",
+                            "params_schema": {
+                                "value": [
+                                    "manual",
+                                    "automatic"
+                                ]
+                            },
+                            "enabled": false,
+                            "disabled_reason": "Read-only initial release (UI-06); command dispatch is not implemented yet."
+                        },
+                        {
+                            "action_id": "set_output",
+                            "params_schema": {
+                                "name": [
+                                    "relay1",
+                                    "relay2",
+                                    "relay3",
+                                    "relay4"
+                                ],
+                                "state": "bool"
+                            },
+                            "enabled": false,
+                            "disabled_reason": "Read-only initial release (UI-06); command dispatch is not implemented yet."
+                        }
+                    ],
+                    "last_pulse": null
+                }
+            ]
+        },
+        {
+            "id": "matter",
+            "label": "GARAGE",
+            "kind": "matter",
+            "configured": true,
+            "devices": [
+                {
+                    "id": "sonoff-1",
+                    "label": "GARAGE-RIGHT",
+                    "address": "ws://192.0.2.95:5580/ws#node_id=1",
+                    "enabled": true,
+                    "health": {
+                        "status": "healthy",
+                        "last_success_at": "2026-10-05T11:59:59Z",
+                        "last_error": null,
+                        "consecutive_failures": 0
+                    },
+                    "parameters": [
+                        {
+                            "id": "on_off",
+                            "category": "boolean",
+                            "unit": null,
+                            "value": "false",
+                            "value_type": "bool",
+                            "quality": "good",
+                            "stale": false,
+                            "observed_at": "2026-10-05T11:59:59Z",
+                            "last_changed_at": "2026-10-04T19:02:11Z",
+                            "revision": 12,
+                            "has_data": true
+                        }
+                    ],
+                    "capabilities": [
+                        {
+                            "action_id": "pulse",
+                            "params_schema": {},
+                            "enabled": true,
+                            "disabled_reason": null
+                        }
+                    ],
+                    "last_pulse": {
+                        "status": "succeeded",
+                        "requested_at": "2026-10-05T07:30:00Z",
+                        "executed_at": "2026-10-05T07:30:01Z",
+                        "error": null
+                    }
+                },
+                {
+                    "id": "sonoff-2",
+                    "label": "GARAGE-LEFT",
+                    "address": "ws://192.0.2.95:5580/ws#node_id=3",
+                    "enabled": true,
+                    "health": {
+                        "status": "healthy",
+                        "last_success_at": "2026-10-05T11:59:59Z",
+                        "last_error": null,
+                        "consecutive_failures": 0
+                    },
+                    "parameters": [
+                        {
+                            "id": "on_off",
+                            "category": "boolean",
+                            "unit": null,
+                            "value": "false",
+                            "value_type": "bool",
+                            "quality": "good",
+                            "stale": false,
+                            "observed_at": "2026-10-05T11:59:59Z",
+                            "last_changed_at": "2026-10-04T19:02:11Z",
+                            "revision": 9,
+                            "has_data": true
+                        }
+                    ],
+                    "capabilities": [
+                        {
+                            "action_id": "pulse",
+                            "params_schema": {},
+                            "enabled": true,
+                            "disabled_reason": null
+                        }
+                    ],
+                    "last_pulse": null
+                }
+            ]
+        }
+    ]
+}
