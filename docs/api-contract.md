@@ -6,6 +6,7 @@ Covers DOC-03, SRV-01, SRV-02, SRV-07, SRV-10, SRV-11. The server's `dashboard/q
 
 - Base URL `https://192.168.1.95` (Caddy `tls internal`). The client verifies the certificate against the pinned root CA in `api/trust.py` and nothing else. Plain `:8080` is closed on the server.
 - `Authorization: Bearer <token>` is sent when a token is set. `/healthz` is open; `/api/dashboard/state` needs at least a `viewer` token; commands need `operator`.
+- A token entered on System is stored only after a valid authenticated state snapshot, using Android Secure Storage backed by Keystore. It is loaded at startup and kept until explicit sign-out/uninstall; normal preferences and logs never contain it (SEC-03, ADR-0006). Server expiry/revocation is still authoritative.
 - Token and certificate problems are told apart from "server down":
 
 | Server / TLS result | Client error | Connection state shown |
@@ -18,7 +19,7 @@ Covers DOC-03, SRV-01, SRV-02, SRV-07, SRV-10, SRV-11. The server's `dashboard/q
 
 ## Command contract (server API-03, CMD §9)
 
-Read from the server's `api/routes/commands.py`, `commands/service.py` and `dispatcher/commands.py` on 2026-10-07. Client and Runtime are tested against an in-process fake transport and the loopback-only simulated server; no command has been sent to live hardware.
+Read from the server's `api/routes/commands.py`, `commands/service.py` and `dispatcher/commands.py` on 2026-10-07. Client and Runtime are tested against an in-process fake transport and the loopback-only simulated server. A single owner-approved Garage Left pulse was sent on 2026-10-08; the server reported success and relay state remained false. Door position is not reported.
 
 - `POST /api/v1/devices/{device_id}/commands`, `operator`, JSON with exactly `action_id`, `params`, `idempotency_key` (1 to 128 characters), `client_origin` (1 to 64), and optional `expected_revisions` (`{parameter_id: int}`). Returns `202 {command_id, status, status_url, expires_at, deduplicated}`.
 - `set_output` params `{name: relay1..relay4, state: bool}`; `set_mode` params `{value: manual|automatic}`.
@@ -29,6 +30,7 @@ Read from the server's `api/routes/commands.py`, `commands/service.py` and `disp
 - Error body `{"error": {"code", "message"}}`. Codes: `invalid_request`, `unauthenticated` (401), `forbidden` (403), `https_required` (426), `control_disabled` (403), `not_found`, `unsupported_action`, `idempotency_conflict`, `conflict`, `stale_telemetry`, `stale_revision`, `precondition_failed`, `device_unavailable` (503), `queue_full` (503), `clock_untrusted` (503), `unavailable` (503).
 - Valve capabilities report `enabled: true` only when the server's deployment config sets `control.valve_enabled`; the app must still check the live data itself (fresh `mode == manual` unless the relay's fresh `always_manual` is true, and fresh `controllable == true`).
 - Mode selection submits immediately on the user's segment tap, with the device's "closes all valves" side effect shown inline (ADR-0004); no optimistic mode update is rendered. On entering Greenhouse, the app requests an immediate snapshot; otherwise external device-page changes appear through Pi polling plus the app's foreground snapshot interval. The app never calls the ESP32 directly.
+- Garage pulses use `POST /api/dashboard/devices/{device_id}/pulse` once for `sonoff-1` or `sonoff-2`. The endpoint is operator-authenticated, accepts an empty body and returns `202 {status: accepted, request_id}`; 409/503 responses provide a `reason`. The server controls a fixed 0.5-second pulse. A fresh dashboard snapshot's `last_pulse` is the only completion signal; after an ambiguous POST the app uses GET-only polling/checks and never resubmits (CTL-11, ADR-0005). `on_off` is relay state, not garage-door position.
 - The **SIMULATED** desktop preview uses an isolated local API, so it cannot reflect changes from the ESP32 webpage. Use the authenticated Pi API in live mode for real readings.
 
 ## Endpoints in use
@@ -36,6 +38,7 @@ Read from the server's `api/routes/commands.py`, `commands/service.py` and `disp
 | Endpoint | Status on server | Client method | Result |
 |---|---|---|---|
 | `GET /api/dashboard/state` (SRV-01) | available; viewer bearer required | `ServerClient.fetch_state()` | JSON object, then `parse_snapshot()` |
+| `POST /api/dashboard/devices/{device_id}/pulse` (CTL-11) | available; operator bearer required | `ServerClient.request_pulse()` | `202` acceptance receipt; completion from a later `last_pulse` snapshot |
 | `GET /healthz` (SRV-02) | available | `is_alive()` | True only for HTTP 200 |
 | `GET /readyz` (SRV-02) | available | `readiness()` | 200 ready; 503 not ready with optional reason |
 

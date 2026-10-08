@@ -10,7 +10,7 @@ These rules apply to every AI assistant and contributor working in this reposito
   - It polls the LAN devices: garden PLC (PUMP), valve controller (GREENHOUSE) and Sonoff/Matter (GARAGE).
   - It stores everything in SQLite and exposes a JSON API.
 - The app shows **all** server KPIs, device health and control signals live, in a tabbed UI.
-- In release 1.0, the only controllable signals are **ValveControl** (`set_mode`, `set_output` relay1–4).
+- In release 1.0, controllable signals are **ValveControl** (`set_mode`, `set_output` relay1–4) and the server-controlled Garage pulses (`sonoff-1`, `sonoff-2`, CTL-11).
 
 ## 2. Source of authority
 
@@ -26,6 +26,7 @@ These rules apply to every AI assistant and contributor working in this reposito
   - Never call ESP32, PLC or Matter devices directly.
 - **No optimistic UI for physical state.** A control shows a new state only after the server reports it. HTTP 2xx means *accepted*, not *confirmed* (CTL-05/06).
 - **No automatic command retries.** Retries are explicit user actions with the same idempotency key (CTL-01/04).
+- **Garage pulse is never retried.** It is non-idempotent; after an ambiguous outcome, use a GET-only status check (CTL-11).
 - **Keep these states distinct everywhere:** `false`, `0`, `null` / no data, `invalid`, `unavailable` and `stale`. Never render a missing value as `0` or `off` (DATA-02).
 - **Valve relays are controllable only when fresh `mode == manual`** and the server capability is enabled (VLV-02, CTL-02). A mode change closes all valves first; submit directly on the explicit segment tap, keep the warning inline, and show only server-reported mode (VLV-03, CTL-05; ADR-0004).
 - **Never enable a control the server reports as disabled** (SSOT-08). Show the `disabled_reason`.
@@ -47,7 +48,7 @@ These rules apply to every AI assistant and contributor working in this reposito
 - One-way data flow: poll → immutable snapshot in the store → views re-render. Views dispatch intents and never mutate state.
 - All design tokens live in `ui/theme.py`. Do not put inline magic colors or sizes in views (UX-17).
 - All user-facing strings live in one strings module (UX-20).
-- Settings (server URL, poll interval, timeouts, token) live in `settings.py`. The default URL is `https://192.168.1.95` (Caddy, pinned root CA in `api/trust.py`). The token is kept in memory only (ADR-0003).
+- Settings (server URL, poll interval, timeouts, token) live in `settings.py`. The default URL is `https://192.168.1.95` (Caddy, pinned root CA in `api/trust.py`). The bearer token is loaded/saved through Android Keystore-backed Secure Storage only after server authentication; it persists until sign-out/uninstall (SEC-03, ADR-0006). Server revocation/expiry still applies.
 - The parameter, capability and party catalogs are **server-driven**. Hard-code only the presentation metadata keyed by id (icons, order, decimals in `domain/presentation.py`; labels and captions in `ui/strings.py`), with a generic fallback (SSOT-07, UX-02).
 - `api/` returns the validated JSON object; `domain/snapshot.py` maps it to models. A malformed parameter becomes `INVALID` (never a default value); only a broken top level raises.
 
@@ -130,17 +131,19 @@ These rules apply to every AI assistant and contributor working in this reposito
 ## 11. Current project state
 
 - Specification: `requirements.md` v0.1 (draft). Checkpoint 1 is committed; see `backlog.md` ("Checkpoint 1 summary") for what is verified and what is not.
-- Implemented and tested (361 tests): M0/M1 foundations, read-only telemetry UI, HTTPS with a pinned Caddy CA, in-memory bearer token entry, typed valve command client/status watcher, fail-closed Greenhouse controls, dedicated mist/rain automation, sensor and identity panels, and a loopback fake API (`scripts/fake-server.ps1`). Authenticated live readings were checked; relay4 LIGHT on/off round trips through the API (2026-10-07) and live Flet UI (2026-10-08) were confirmed and restored. No water-valve relay or mode command has been sent. Android control UI remains unverified.
+- Implemented and tested (378 tests): M0/M1 foundations, read-only telemetry UI, HTTPS with a pinned Caddy CA, Android Keystore-backed remembered token, typed valve/pulse clients and status watchers, fail-closed Greenhouse and Garage Right/Left controls, compact daily-use Garage rows, dedicated mist/rain automation, sensor and identity panels, and a loopback fake API (`scripts/fake-server.ps1`). Authenticated live readings were checked; relay4 LIGHT on/off round trips were confirmed/restored, and Garage Left pulse success was verified through the live API and confirmed by the owner through the app. No Garage Right pulse or water-valve/mode command has been sent live. Secure-token persistence still needs a physical-device check.
 - **Verified on the Android emulator (2026-10-06):** build, install, launch, live data from the Pi over plain HTTP, the Overview and System tabs, tab taps, text entry, switching the server address, the offline banner with automatic recovery, and settings persistence across a cold relaunch. `scripts/emulator.ps1`, `build-debug.ps1` and `install.ps1` work.
 - **Not yet verified on Android:** the Pump, Greenhouse and Garage tabs, swiping, long-press details, tapping an Overview card, the app-lifecycle pause/resume, dark theme, font scaling, a real phone, `device.ps1` and `deploy.ps1` as a whole (backlog B-134, B-135, B-136, B-151).
-- **Known problems:** Android controls are not verified; Windows Developer Mode is currently off, so Android builds fail on symlinks. The app's Python output does not show in `scripts/logs.ps1` (B-149). Flet's `SharedPreferences` never answers on desktop, so settings do not persist there; the repository times out after 3 s and uses defaults (B-116). Token storage is memory-only (ADR-0003, B-302); history is not available (SRV-06). Terminal command re-dispatch semantics remain open (B-211). Valve telemetry was transiently stale/degraded on 2026-10-08 and healthy/fresh on a later read (OBS-04); investigate recurrence. Controls stay fail-closed whenever telemetry is stale.
+- **Known problems:** Android controls and secure-token persistence are not yet verified on a physical phone (B-134, B-302). The app's Python output does not show in `scripts/logs.ps1` (B-149). Flet's `SharedPreferences` times out on desktop, so settings do not persist there; the repository times out after 3 s and uses defaults (B-116). History is not available (SRV-06). Terminal command re-dispatch semantics remain open (B-211). Valve telemetry was transiently stale/degraded on 2026-10-08 and healthy/fresh on a later read (OBS-04); investigate recurrence. Controls stay fail-closed whenever telemetry is stale. Garage `on_off` reports relay state only, never door position.
 - Server dependencies:
   - Available: SRV-01 `/api/dashboard/state` and SRV-02 `/healthz` and `/readyz`.
   - Available in server code: valve command endpoints, dispatcher, capability gating (SRV-04/05) and HTTPS/authentication (SRV-07). Live valve telemetry and relay4 capability were verified with an operator token; no other relay/mode command was tested.
+  - Available: authenticated Sonoff pulse endpoint and server-reported `last_pulse`; Garage Left was verified live. Garage Right is implemented but has not been actuated live.
   - Missing: history endpoint (SRV-06).
   - Observed on the live server (not requests): stale data with `healthy` devices (OBS-01) and failed Sonoff pulses (OBS-02).
   - Latest verified live valve state (2026-10-08 10:30Z): healthy/fresh. It was transiently stale earlier (OBS-04); do not actuate whenever telemetry is stale.
+  - Latest Garage Left pulse (2026-10-08 16:17Z): succeeded; `on_off=false`, health healthy, no pulse error. Door position remains unknown. Garage Right has not been live-tested.
 - Next steps (see `backlog.md`):
   1. Finish the Android checks: the party tabs, swipe, long-press, lifecycle (B-134, B-136, B-151), then make the app's log visible (B-149).
-  2. Re-enable Developer Mode, build/install and visually verify Greenhouse controls against the fake server. Keep water-valve relay and mode actuation blocked until separate explicit owner approval (B-307).
+  2. Build/install and visually verify Greenhouse and Garage controls against the fake server. Keep water-valve relay and mode actuation blocked until separate explicit owner approval (B-307).
   3. Resolve terminal retry semantics with the server developer (B-211); finish command log/poll-rate follow-ups (B-202, B-207, B-208).

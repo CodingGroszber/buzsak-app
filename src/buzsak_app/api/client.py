@@ -67,6 +67,23 @@ class AmbiguousCommandResult(ConnectionFailed):
     """Command submission may have reached the server; query/retry only with its same key."""
 
 
+class AmbiguousPulseResult(ConnectionFailed):
+    """A momentary pulse may have been accepted; never submit it again automatically."""
+
+
+class PulseRejected(ApiError):
+    """The server rejected the pulse before acceptance."""
+
+    def __init__(self, status_code: int, reason: str) -> None:
+        super().__init__(reason)
+        self.status_code = status_code
+
+
+@dataclass(frozen=True)
+class PulseReceipt:
+    request_id: int
+
+
 @dataclass(frozen=True)
 class CommandReceipt:
     command_id: str
@@ -278,6 +295,48 @@ class ServerClient:
         if payload.get("command_id") != command_id or payload.get("status") != "cancelled":
             raise MalformedResponse("command cancellation response is invalid")
         return "cancelled"
+
+    async def request_pulse(self, device_id: str) -> PulseReceipt:
+        """Enqueue one server-controlled 0.5 s pulse; never retry (CTL-11)."""
+        try:
+            response = await self._http.post(
+                endpoints.PULSE_PATH.format(device_id=device_id))
+        except httpx.TimeoutException:
+            raise AmbiguousPulseResult(
+                "pulse acceptance is unknown; check Garage status before another request") from None
+        except httpx.TransportError as error:
+            if _caused_by_tls(error):
+                raise CertificateRejected(
+                    "server certificate is not trusted") from None
+            raise AmbiguousPulseResult(
+                "pulse outcome is unknown; check Garage status before another request") from None
+        if response.status_code in (401, 403):
+            raise Unauthorized(response.status_code)
+        if response.status_code == 426:
+            raise HttpsRequired()
+        if response.status_code in (409, 503):
+            try:
+                payload = _json_object(response)
+                reason = payload.get("reason")
+            except MalformedResponse:
+                reason = None
+            safe_reason = (
+                reason if isinstance(reason, str) and reason
+                else "pulse was refused by the server"
+            )
+            raise PulseRejected(response.status_code, safe_reason[:200])
+        if response.status_code != 202:
+            raise HttpStatusError(response.status_code)
+        try:
+            payload = _json_object(response)
+        except MalformedResponse:
+            raise AmbiguousPulseResult(
+                "pulse acceptance response was malformed; check Garage status before another request") from None
+        request_id = payload.get("request_id")
+        if payload.get("status") != "accepted" or type(request_id) is not int or request_id <= 0:
+            raise AmbiguousPulseResult(
+                "pulse acceptance response was incomplete; check Garage status before another request")
+        return PulseReceipt(request_id)
 
     async def _get(self, path: str) -> httpx.Response:
         try:

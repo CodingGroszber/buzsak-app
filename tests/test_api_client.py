@@ -11,6 +11,7 @@ from conftest import load_state_fixture
 
 from buzsak_app.api.client import (
     AmbiguousCommandResult,
+    AmbiguousPulseResult,
     CertificateRejected,
     CommandApiError,
     CommandReceipt,
@@ -20,6 +21,8 @@ from buzsak_app.api.client import (
     HttpStatusError,
     MalformedResponse,
     Readiness,
+    PulseReceipt,
+    PulseRejected,
     ServerClient,
     Unauthorized,
 )
@@ -262,6 +265,58 @@ def test_command_submit_timeout_is_ambiguous_and_never_retried() -> None:
             "valve-controller", action_id="set_mode", params={"value": "manual"},
             idempotency_key="same-key"))
     assert calls == ["POST"]
+
+
+def test_pulse_posts_to_operator_route_and_returns_request_id_once() -> None:
+    seen = []
+
+    def handler(request):
+        seen.append((request.method, request.url.path,
+                     request.headers.get("authorization"), request.read()))
+        return httpx.Response(202, json={"status": "accepted", "request_id": 25})
+
+    result = _run(handler, lambda client: client.request_pulse("sonoff-2"),
+                  token="operator-token")
+    assert result == PulseReceipt(request_id=25)
+    assert seen == [(
+        "POST", "/api/dashboard/devices/sonoff-2/pulse",
+        "Bearer operator-token", b"",
+    )]
+
+
+def test_pulse_refusal_is_typed_and_never_retried() -> None:
+    calls = []
+
+    def handler(request):
+        calls.append(request.method)
+        return httpx.Response(409, json={
+            "status": "rejected", "reason": "device telemetry is stale"})
+
+    with pytest.raises(PulseRejected, match="telemetry is stale") as info:
+        _run(handler, lambda client: client.request_pulse("sonoff-2"),
+             token="operator-token")
+    assert info.value.status_code == 409
+    assert calls == ["POST"]
+
+
+def test_pulse_timeout_is_uncertain_and_never_retried() -> None:
+    calls = []
+
+    def handler(request):
+        calls.append(request.method)
+        raise httpx.ReadTimeout("lost response", request=request)
+
+    with pytest.raises(AmbiguousPulseResult):
+        _run(handler, lambda client: client.request_pulse("sonoff-2"),
+             token="operator-token")
+    assert calls == ["POST"]
+
+
+def test_malformed_accepted_pulse_response_is_ambiguous() -> None:
+    with pytest.raises(AmbiguousPulseResult):
+        _run(_json(202, {"status": "accepted", "request_id": "unknown"}),
+             lambda client: client.request_pulse("sonoff-2"),
+             token="operator-token")
 
 
 @pytest.mark.parametrize("payload", [

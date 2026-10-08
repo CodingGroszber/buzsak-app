@@ -48,7 +48,7 @@ class SystemTab:
             dense=True,
             on_submit=self._save,
         )
-        # Held in memory only; the repository never persists it (SEC-03, ADR-0003).
+        # Populated from native secure storage; never placed in ordinary preferences (SEC-03, ADR-0006).
         self._token = ft.TextField(
             label=strings.SYSTEM_TOKEN,
             value=settings.token or "",
@@ -70,8 +70,16 @@ class SystemTab:
                 self._url,
                 self._token,
                 muted_text(strings.SYSTEM_TOKEN_NOTE),
-                ft.Row([ft.FilledButton(strings.SYSTEM_SAVE,
-                       on_click=self._save), self._message]),
+                ft.Row(
+                    [
+                        ft.FilledButton(strings.SYSTEM_SAVE,
+                                        on_click=self._save),
+                        ft.TextButton(strings.SYSTEM_SIGN_OUT,
+                                      on_click=self._sign_out),
+                        self._message,
+                    ],
+                    wrap=True,
+                ),
             ],
             spacing=SPACING.sm,
         )
@@ -93,8 +101,16 @@ class SystemTab:
         )
 
     async def _save(self, _: ft.Event) -> None:
-        error = await self._on_save(self._url.value or "", self._token.value or "")
-        self._message.value = error or strings.SYSTEM_SAVED
+        token = self._token.value or ""
+        error = await self._on_save(self._url.value or "", token)
+        self._message.value = error or (
+            strings.SYSTEM_SAVED if token.strip() else strings.SYSTEM_SIGNED_OUT)
+
+    async def _sign_out(self, _: ft.Event) -> None:
+        error = await self._on_save(self._url.value or "", "")
+        self._message.value = error or strings.SYSTEM_SIGNED_OUT
+        if error is None:
+            self._token.value = ""
 
     def refresh(self, state: AppState, now: float, settings: Settings) -> None:
         values = self._values

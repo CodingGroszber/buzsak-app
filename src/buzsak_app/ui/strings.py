@@ -72,8 +72,10 @@ SYSTEM_POLL = "Refresh every"
 SYSTEM_VERSION = "App version"
 SYSTEM_SAVE = "Save"
 SYSTEM_SAVED = "Saved"
+SYSTEM_SIGN_OUT = "Sign out"
+SYSTEM_SIGNED_OUT = "Signed out; saved token removed."
 SYSTEM_TOKEN = "Access token"
-SYSTEM_TOKEN_NOTE = "Kept in memory only: enter it again after restarting the app."
+SYSTEM_TOKEN_NOTE = "Encrypted on this device until sign-out or uninstall. Server expiry or revocation still applies."
 BANNER_UNAUTHORIZED = "The server needs an access token. Enter it in System."
 GREENHOUSE_CONTROL = "Garden Valve Control"
 VALVES = "Valves"
@@ -125,6 +127,57 @@ SENSOR_AGE_MISSING = "Frame age unavailable"
 SENSOR_NO_GOOD_FRAME = "No good frame recorded"
 DEVICE_FIRMWARE = "Firmware"
 DEVICE_IP = "Controller IP"
+GARAGE_RIGHT = "Garage Right"
+GARAGE_LEFT = "Garage Left"
+GARAGE_TRIGGER = "Trigger"
+GARAGE_TRIGGER_TOOLTIP = "Send one brief garage-door trigger"
+GARAGE_RELAY_ACTIVE = "Relay on"
+GARAGE_RELAY_INACTIVE = "Relay off"
+GARAGE_UNREACHABLE = "Unavailable"
+PULSE_DISABLED = "Pulse unavailable"
+PULSE_PENDING = "⏳ Pulse pending"
+PULSE_UNCERTAIN = "⚠️ Pulse outcome uncertain"
+PULSE_UNKNOWN = "⚠️ Pulse status unknown"
+PULSE_CANCELLED = "⏹ Pulse cancelled"
+PULSE_BUTTON_TOOLTIP = "Send one server-controlled 0.5-second pulse"
+GARAGE_POSITION_NOTE = "Door position is not reported"
+
+
+def garage_label(device_id: str) -> str:
+    return {
+        "sonoff-1": GARAGE_RIGHT,
+        "sonoff-2": GARAGE_LEFT,
+    }.get(device_id, device_id)
+
+
+def pulse_sent(relay_state: str) -> str:
+    return f"✅ Pulse sent · {relay_state}"
+
+
+def pulse_error(relay_state: str) -> str:
+    return f"❌ Pulse error · {relay_state}"
+
+
+def pulse_expired(relay_state: str) -> str:
+    return f"⌛ Pulse expired · {relay_state}"
+
+
+_PULSE_STATUS_LABELS = {
+    "pending": "⏳ Pulse pending",
+    "dispatching": "⚙️ Sending pulse",
+    "sent": "📡 Pulse sent",
+    "succeeded": "✅ Pulse completed",
+    "failed": "❌ Pulse failed",
+    "expired": "⌛ Pulse expired",
+    "uncertain": "⚠️ Pulse outcome uncertain",
+}
+
+
+def pulse_status(status: str, reason: str | None = None) -> str:
+    label = _PULSE_STATUS_LABELS.get(
+        status, f"Pulse: {status.replace('_', ' ')}")
+    detail = reason.replace("\n", " ").strip()[:120] if reason else ""
+    return label + (f" · {detail}" if detail else "")
 
 
 def mist_run_hint(minutes: float) -> str:
@@ -187,6 +240,9 @@ def command_status(status: str, reason: str | None = None) -> str:
 
 
 ERROR_BAD_URL = "Enter an address starting with http:// or https://"
+ERROR_TOKEN_REJECTED = "The server rejected this token; it was not saved."
+ERROR_TOKEN_VERIFY = "Could not verify server access; the token was not saved."
+ERROR_SECURE_STORAGE_UNAVAILABLE = "Could not access encrypted token storage; no changes were saved."
 
 
 def mode_text(value: object) -> str:

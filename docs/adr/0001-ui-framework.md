@@ -36,4 +36,4 @@ Verified against the Flet docs on 2026-10-05:
 - The packaged app is large, and the first Android launch unpacks the Python runtime. NFR-01 (cold start) must be measured on a real device (backlog B-305).
 - `importlib.metadata` is not reliable in the packaged app because the project is not installed there. The version shown in the app (backlog B-303) needs a different source than package metadata.
 - Native Kotlin/Java remains allowed only through a further ADR (ARC-01).
-- Keystore-backed token storage (SEC-03) depends on a Flet plugin or a native bridge. This is open and will need its own ADR (backlog B-302).
+- Keystore-backed token storage uses Flet Secure Storage; see [ADR-0006](0006-keystore-token-persistence.md) (SEC-03, B-302).

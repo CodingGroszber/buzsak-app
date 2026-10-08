@@ -17,6 +17,7 @@ from urllib.parse import unquote, urlsplit
 
 
 _DEVICE_ID = "valve-controller"
+_PULSE_COOLDOWN_S = 3.0
 _RELAY_PARAMETERS = {
     "relay1": "relay1_mist",
     "relay2": "relay2_rain",
@@ -49,6 +50,10 @@ class FakeApi:
         self.state = json.loads(fixture.read_text(encoding="utf-8"))
         self.commands: dict[str, dict[str, Any]] = {}
         self.idempotency: dict[str, tuple[str, str]] = {}
+        self._pulse_request_id = 0
+        self._last_pulse_monotonic: float | None = None
+        self._pulse_pending = False
+        self._pulse_pending_snapshots = 0
         self._prepare_state()
 
     def _prepare_state(self) -> None:
@@ -97,6 +102,24 @@ class FakeApi:
         for capability in device["capabilities"]:
             capability["enabled"] = True
             capability["disabled_reason"] = None
+        garage = next(
+            p for p in self.state["parties"] if p["id"] == "matter")
+        for sonoff in garage["devices"]:
+            sonoff["health"].update({
+                "status": "healthy", "last_success_at": _now(),
+                "last_error": None, "consecutive_failures": 0,
+                "stale": False,
+            })
+            for parameter in sonoff["parameters"]:
+                parameter["observed_at"] = _now()
+                parameter["stale"] = False
+            if self.scenario == "offline":
+                sonoff["health"].update(
+                    status="offline", last_error="simulated offline device")
+            elif self.scenario == "stale":
+                sonoff["health"].update(status="degraded", stale=True)
+                for parameter in sonoff["parameters"]:
+                    parameter["stale"] = True
         if self.scenario == "offline":
             device["health"]["status"] = "offline"
             device["health"]["last_error"] = "simulated offline device"
@@ -124,7 +147,80 @@ class FakeApi:
                 health = self._device()["health"]
                 health["last_success_at"] = self.state["generated_at"]
                 health["stale"] = False
+            if self._pulse_pending:
+                if self._pulse_pending_snapshots > 0:
+                    self._pulse_pending_snapshots -= 1
+                else:
+                    sonoff = self._device_by_id("sonoff-2")
+                    sonoff["last_pulse"].update(
+                        status="succeeded", executed_at=self.state["generated_at"])
+                    self._pulse_pending = False
             return copy.deepcopy(self.state)
+
+    def pulse(self, device_id: str) -> tuple[int, dict[str, Any]]:
+        with self.lock:
+            try:
+                device = self._device_by_id(device_id)
+            except StopIteration:
+                return 404, {"status": "rejected", "reason": "device not found"}
+            if self.scenario in {"offline", "stale"}:
+                return 503, {
+                    "status": "rejected",
+                    "reason": "simulated unavailable device",
+                }
+            on_off = next(
+                (p for p in device["parameters"] if p["id"] == "on_off"), None)
+            capability = next(
+                (c for c in device["capabilities"]
+                 if c["action_id"] == "pulse"),
+                None,
+            )
+            if (
+                device["health"].get("status") != "healthy"
+                or on_off is None or on_off.get("quality") != "good"
+                or on_off.get("stale") is True
+            ):
+                return 503, {
+                    "status": "rejected",
+                    "reason": "device telemetry is not fresh",
+                }
+            if capability is None or capability.get("enabled") is not True:
+                return 409, {
+                    "status": "rejected",
+                    "reason": "pulse capability is disabled",
+                }
+            now_monotonic = time.monotonic()
+            if (
+                self._last_pulse_monotonic is not None
+                and now_monotonic - self._last_pulse_monotonic < _PULSE_COOLDOWN_S
+            ):
+                return 409, {
+                    "status": "rejected", "reason": "pulse cooldown is active",
+                }
+            self._last_pulse_monotonic = now_monotonic
+            self._pulse_request_id += 1
+            requested_at = _now()
+            device["last_pulse"] = {
+                "status": "pending", "requested_at": requested_at,
+                "executed_at": None, "error": None,
+            }
+            if device_id == "sonoff-2":
+                self._pulse_pending = True
+                self._pulse_pending_snapshots = 1
+            else:
+                device["last_pulse"].update(
+                    status="succeeded", executed_at=_now())
+            return 202, {
+                "status": "accepted", "request_id": self._pulse_request_id,
+            }
+
+    def _device_by_id(self, device_id: str) -> dict[str, Any]:
+        return next(
+            device
+            for party in self.state["parties"]
+            for device in party["devices"]
+            if device["id"] == device_id
+        )
 
     def submit(self, payload: object) -> tuple[int, dict[str, Any]]:
         if not isinstance(payload, dict) or set(payload) - {
@@ -305,7 +401,13 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         if not self._authorize(operator=True):
             return
-        if not urlsplit(self.path).path.startswith("/api/v1/devices/") or not urlsplit(self.path).path.endswith("/commands"):
+        path = urlsplit(self.path).path
+        if path.startswith("/api/dashboard/devices/") and path.endswith("/pulse"):
+            device_id = unquote(path.split("/")[-2])
+            status, result = self.api.pulse(device_id)
+            self._send(status, result)
+            return
+        if not path.startswith("/api/v1/devices/") or not path.endswith("/commands"):
             self._send(404, FakeApi._error("not_found", "not found"))
             return
         try:

@@ -14,7 +14,9 @@ import flet as ft
 from buzsak_app.api.client import ApiError, AmbiguousCommandResult, CommandApiError
 from buzsak_app.domain.models import Device, HealthStatus, Parameter, ValueState
 from buzsak_app.ui import strings, theme
+from buzsak_app.ui.command_visuals import command_state_tone
 from buzsak_app.ui.components import muted_text, section_title
+from buzsak_app.ui.control_styles import state_button_style
 from buzsak_app.ui.greenhouse_readings import GreenhouseReadings
 from buzsak_app.ui.theme import SPACING, TYPE
 from buzsak_app.ui.view_models import Tone
@@ -37,17 +39,6 @@ _OUTPUTS = (
 )
 _TERMINAL = frozenset(
     {"confirmed", "failed", "expired", "cancelled", "uncertain"})
-_COMMAND_TONES = {
-    "pending": Tone.MUTED,
-    "dispatching": Tone.WARNING,
-    "sent": Tone.WARNING,
-    "acknowledged": Tone.WARNING,
-    "confirmed": Tone.OK,
-    "failed": Tone.ERROR,
-    "expired": Tone.ERROR,
-    "cancelled": Tone.MUTED,
-    "uncertain": Tone.WARNING,
-}
 
 
 def _current(device: Device, parameter_id: str) -> Parameter | None:
@@ -149,10 +140,7 @@ class GreenhouseControls:
                 strings.VALUE_MISSING,
                 icon=ft.Icons.TOGGLE_OFF,
                 on_click=on_relay_click,
-                style=ft.ButtonStyle(
-                    shape=ft.RoundedRectangleBorder(radius=4),
-                    padding=ft.Padding.symmetric(horizontal=12, vertical=8),
-                ),
+                style=state_button_style(Tone.MUTED),
             )
             button.width = 96
             button.height = 40
@@ -241,14 +229,8 @@ class GreenhouseControls:
             button.icon = ft.Icons.TOGGLE_ON if state is True else ft.Icons.TOGGLE_OFF
             self._relay_dots[output_id].color = (
                 ft.Colors.PRIMARY if state is True else ft.Colors.OUTLINE)
-            button.style = ft.ButtonStyle(
-                bgcolor=(ft.Colors.PRIMARY_CONTAINER if state is True
-                         else ft.Colors.ERROR_CONTAINER),
-                color=(ft.Colors.ON_PRIMARY_CONTAINER if state is True
-                       else ft.Colors.ON_ERROR_CONTAINER),
-                shape=ft.RoundedRectangleBorder(radius=4),
-                padding=ft.Padding.symmetric(horizontal=12, vertical=8),
-            )
+            button.style = state_button_style(
+                Tone.OK if state is True else Tone.ERROR if state is False else Tone.MUTED)
             button.tooltip = strings.relay_tooltip(label, state)
             capability = device.capability("set_output")
             allowed_mode = mode == "manual" or (
@@ -315,8 +297,7 @@ class GreenhouseControls:
 
     def _show_command_status(self, status: str, reason: str | None = None) -> None:
         self._message.value = strings.command_status(status, reason)
-        self._message.color = theme.tone_color(
-            _COMMAND_TONES.get(status, Tone.NEUTRAL))
+        self._message.color = theme.tone_color(command_state_tone(status))
 
     async def _relay_clicked(self, output_id: str) -> None:
         suffix = next(parameter_id for relay, parameter_id,

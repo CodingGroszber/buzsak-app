@@ -11,7 +11,7 @@ The specification wins over this file. When the two disagree, fix this file.
   - `P2` — later / nice to have
 - **Blocked** items name the server dependency (SRV) or open decision (OD) they are waiting on.
 
-Last reviewed: 2026-10-08 (live Greenhouse UI and command-path check). See the checkpoint summaries below for what is verified and what is not.
+Last reviewed: 2026-10-08 (secure token persistence implementation). See the checkpoint summaries below for what is verified and what is not.
 
 ---
 
@@ -54,6 +54,20 @@ Last reviewed: 2026-10-08 (live Greenhouse UI and command-path check). See the c
 **Current live observation:** the last inspected Greenhouse screen showed mode `automatic` and Mist `open`, as reported by the server. This is the controller's automatic state, not an app-issued command; the app was left in LIVE SERVER mode and no control was touched afterward.
 
 **Still open:** Android Greenhouse UI/build verification is blocked while Windows Developer Mode is off (B-134, B-307). Water-valve relays and mode actuation remain untested. Command re-dispatch after a terminal failure remains unresolved (B-211); haptics, tighter in-flight polling and a session command log remain (B-202, B-207, B-208).
+
+## Checkpoint 3 summary (2026-10-08)
+
+**State:** 378 tests pass. The Garage tab has compact Right/Left Trigger rows with fail-closed per-device health/quality/capability gating, concise lifecycle feedback, and server-snapshot status. The loopback fake server verifies pending-to-succeeded, cooldown, and stale/offline rejection without hardware access.
+
+**Verified live:** one explicitly approved `sonoff-2` pulse was accepted as request 4. A later GET reported `last_pulse=succeeded`, with no error; device health was healthy and `on_off` remained false. This confirms the pulse lifecycle only, not garage-door position. No Garage Right pulse was sent.
+
+**Still open:** Android Garage UI verification and the broader Android checks remain unverified (B-134, B-136, B-151). No live Garage Right pulse has been sent. The repeated desktop `SharedPreferences` timeout remains tracked by B-116.
+
+## Checkpoint 4 summary (2026-10-08)
+
+**State:** 378 tests pass. Bearer credentials now load/save via pinned Flet Secure Storage, backed by Android Keystore. A token is remembered only after a valid authenticated state snapshot; explicit Sign out removes it. Ordinary preferences and logs remain token-free, and Android backup is disabled for the Keystore entry.
+
+**Still open:** Build/install this version and verify save, force-stop/relaunch persistence, invalid-token behavior, and Sign out on a physical Android device (B-302, B-154). The server may still expire or revoke credentials.
 
 ---
 
@@ -102,7 +116,7 @@ Last reviewed: 2026-10-08 (live Greenhouse UI and command-path check). See the c
 | B-111 | Build the store: immutable snapshot replacement and a per-parameter change diff (`revision` / `observed_at`) | ARC-06, UPD-07 | P0 | done (`state/store.py`, `state/diff.py`) |
 | B-112 | Build the polling service: interval from settings, no overlapping polls, exponential backoff capped at 30 s, pause and resume with the app lifecycle | UPD-01, UPD-03, UPD-04, UPD-05 | P0 | done (`state/poller.py`, wired in `ui/app.py`; polling, backoff and automatic recovery verified on Android; the HIDE/PAUSE and SHOW/RESUME lifecycle handlers are not yet exercised, see B-151) |
 | B-113 | Add a connection-state model (connecting / online / offline / server unhealthy) and the "last updated N s ago" freshness value | UPD-05, UPD-06 | P0 | done (`state/connection.py`) |
-| B-114 | Persist settings with Flet client storage: URL, poll interval, timeouts | ARC-09 | P0 | done on Android (a saved address survived a force-stop and cold relaunch). On desktop the storage call still never answers, so settings do not persist there. The token is deliberately not persisted (B-302) |
+| B-114 | Persist settings with Flet client storage: URL, poll interval, timeouts | ARC-09 | P0 | done on Android (a saved address survived a force-stop and cold relaunch). On desktop the storage call still never answers, so settings do not persist there. The token uses separate secure storage (B-302) |
 | B-115 | Cache the last snapshot for instant startup, shown as *cached* until a fresh fetch arrives | SSOT-05, NFR-01 | P1 | todo |
 | B-116 | Find out why Flet's `SharedPreferences` never answers on desktop (`Timeout waiting for invoke method listener`, even though the service is attached to the page). It works on Android (see B-114), so this is now only a desktop-development inconvenience: the app waits 3 s at start, then uses defaults | ARC-09, NFR-04 | P2 | todo (cause unknown; a throwaway probe could not be run) |
 
@@ -118,7 +132,7 @@ Last reviewed: 2026-10-08 (live Greenhouse UI and command-path check). See the c
 | B-126 | Add the global connection banner and the freshness indicator | UPD-05, UPD-06 | P0 | done (connection chip, banner, "updated N s ago", and a warning when the server's own data is old, `domain/staleness.py`) |
 | B-127 | Build the **Pump** tab: pumps, switches, LEDs, pressure, and water level with a reliability note. `set_output` is shown disabled with its reason | §4.2, SSOT-08 | P0 | done (generic read-only cards; `set_output` is not shown as a control yet) |
 | B-128 | Build the **Greenhouse** tab (read-only part): sensor A/B cards, relay states, mode, automation panel (progress ring, frozen state) | VLV-07, VLV-08 | P0 | doing (all KPI cards shown, automation values dimmed and flagged *Frozen* in manual mode; no progress ring and no relay controls yet) |
-| B-129 | Build the **Garage** tab: right/left `on_off` and `last_pulse` status. `pulse` is shown read-only | §4.2, §4.3 | P0 | done (`on_off` cards and the last pulse in the device header) |
+| B-129 | Build the **Garage** tab: compact Right/Left relay-state rows and pulse controls | §4.2, §4.3, CTL-11, UX-23 | P0 | done (both controls and loopback lifecycle verified; live app action confirmed by owner on Garage Left; no live Right pulse sent) |
 | B-130 | Build the **Overview** tab: one card per party with headline KPIs and alerts; tapping a card opens its tab | UX-03 | P0 | done (`ui/overview_tab.py`, headline KPIs from `domain/presentation.py`) |
 | B-131 | Build the **System** tab: settings editor, `/readyz`, `generated_at`, health table, app version | UX-04 | P0 | doing (server address editor, connection facts and app version; no `/readyz` call or per-device health table; version is blank in a packaged app) |
 | B-132 | Implement diff-based re-rendering (update only changed controls) and value-change animations of 250 ms or less | UPD-07, NFR-02 | P1 | doing (cards update in place from the diff, tested; opacity animation only; frame rate unmeasured) |
@@ -155,7 +169,7 @@ Verified on the emulator on 2026-10-06: build, install, launch, live data over p
 |---|---|---|---|
 | [ ] | Pump tab | Cards for pressure, water level, pumps, switches and LEDs; units, states and the water-level caption | B-136 |
 | [ ] | Greenhouse tab | Sensor A/B, relays, mode and automation cards; automation values dimmed and flagged *Frozen* when the mode is manual (needs the fake server or a manual-mode device) | B-136, B-141 |
-| [ ] | Garage tab | Both Sonoff `on_off` cards and the last-pulse line in each device header | B-136 |
+| [ ] | Garage tab | Compact Right/Left relay state and Trigger rows; concise lifecycle feedback | B-136 |
 | [ ] | Swiping between tabs | Horizontal swipe changes tab and the tab bar follows | B-134 |
 | [ ] | Long-press details | Long-press on a card shows the tooltip with observed and changed times | B-134 |
 | [ ] | Tapping an Overview card | Opens that party's tab | B-134 |
@@ -189,12 +203,14 @@ Verified on the emulator on 2026-10-06: build, install, launch, live data over p
 | # | Item | Reqs | Prio | Status |
 |---|---|---|---|---|
 | B-301 | Write `scripts/build-release.ps1`: signed APK/AAB with keystore and passwords from environment variables, build number increment | BLD-05, BLD-11, SEC-04 | P1 | todo |
-| B-302 | Secure token storage (Keystore-backed), or an ADR explaining why the token is not persisted | SEC-03 | P1 | todo (interim: memory only, ADR-0003; candidate: `flet-secure-storage`, Keystore-backed on Android per its docs; needs a device test) |
-| B-303 | Add the app icon, splash screen and version/build info on the System tab | UX-04 | P1 | todo |
+| B-302 | Persist the verified bearer token in Android Keystore-backed secure storage until sign-out or uninstall | SEC-03 | P1 | doing (secure store, authenticated-save gate and sign-out implemented; physical-device persistence/restart test remains) |
+| B-303 | Add the app icon, splash screen and version/build info on the System tab | UX-04, UX-24 | P1 | partial (launcher/splash icon implemented; System version/build info remains) |
 | B-304 | Write the manual acceptance checklist in `docs/testing.md` and run it on the emulator and a physical device | TST-05, AT-01..AT-08 | P1 | todo |
 | B-305 | Check performance and battery: one hour of foreground polling with no memory growth; measure cold start | NFR-01..NFR-03 | P1 | todo |
 | B-306 | Finish the README quick start and the `docs/build-and-deploy.md` troubleshooting section; verify a clean-clone build | DOC-01, DOC-07, BLD-10, AT-07 | P1 | todo |
 | B-307 | **Live valve control on real hardware.** Requires a valid operator token, the server enabling the capabilities, Android verification and explicit owner approval for each control scope | VLV-*, TST-06 | P1 | partial: relay4 LIGHT round trips confirmed/restored by API (2026-10-07) and live UI (2026-10-08); water-valve relays and mode remain untested; Android verification blocked (Developer Mode off) |
+| B-308 | **Garage Left live pulse check.** Require fresh healthy telemetry and enabled capability; send one pulse only and observe `last_pulse` | CTL-11, TST-06 | P1 | done (2026-10-08: fresh healthy preflight, one accepted request, then `last_pulse=succeeded`; relay remained false; no retry) |
+| B-309 | **Garage Right live pulse check.** Require fresh healthy telemetry and enabled capability; send one pulse only and observe `last_pulse` | CTL-11, TST-06 | P1 | todo (not sent; requires explicit owner approval for live Garage Right actuation) |
 
 ## M4 — Post-1.0
 

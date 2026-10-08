@@ -1,6 +1,6 @@
-# ADR-0003: HTTPS with a pinned root CA; the token is kept in memory only
+# ADR-0003: HTTPS with a pinned root CA; token initially kept in memory only
 
-- **Status:** Accepted (owner choices, 2026-10-07)
+- **Status:** Accepted for HTTPS/CA; token-storage portion superseded by [ADR-0006](0006-keystore-token-persistence.md)
 - **Date:** 2026-10-07
 - **Covers:** SEC-01, SEC-02, SEC-03, SRV-07, B-302, B-403
 - **Supersedes in part:** ADR-0002 (cleartext HTTP to the server)
@@ -20,7 +20,7 @@ Caddy's CA is private, so neither the public web CAs nor Android's system store 
 | Topic | Decision | Alternatives rejected |
 |---|---|---|
 | CA trust | Embed the server's **public** root CA in `api/trust.py` and verify against it **only**. No other server is accepted | Pasting the PEM in Settings (awkward on a phone); disabling verification (defeats HTTPS) |
-| Token storage | **Memory only.** Entered on the System tab, never written to storage, never logged. It must be entered again after each app start | `flet-secure-storage` (Keystore): deferred; the owner preferred no new native dependency for now (B-302 stays open) |
+| Token storage | **At the time of this decision, memory only.** This choice was superseded by ADR-0006 on 2026-10-08 | Keystore-backed Flet secure storage was initially deferred |
 | Default address | `https://192.168.1.95`. The retired default `http://192.168.1.95:8080` saved by older builds is replaced by it on load | Keeping the old value, which would leave a phone stuck on a dead address |
 | Cleartext | The Android cleartext permission from ADR-0002 stays for now: it is needed for the fake server on the emulator (`http://10.0.2.2`) and for any non-HTTPS address. Remove it once the fake server also speaks TLS | Removing it now, which would break the fake-server workflow |
 
@@ -29,4 +29,4 @@ Caddy's CA is private, so neither the public web CAs nor Android's system store 
 - If Caddy's CA is regenerated (for example its data directory is lost), the app shows "server certificate is not trusted". Fix: replace `SERVER_ROOT_CA_PEM` and rebuild.
 - The certificate is public. It is not a secret and may live in the repo. No token, private key or password may.
 - A wrong or revoked token shows "Sign-in needed" and a banner; reads recover without a restart once a valid token is entered.
-- SEC-03 asks for Keystore-backed storage. Until B-302 is done, "memory only" is the documented fallback that SEC-03 allows.
+- The token-storage decision in this ADR was superseded by ADR-0006 on 2026-10-08. The HTTPS and pinned-CA decisions remain in effect.

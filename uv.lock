@@ -46,6 +46,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "flet" },
+    { name = "flet-secure-storage" },
     { name = "httpx" },
 ]
 
@@ -59,6 +60,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "flet", specifier = "==1.0.3" },
+    { name = "flet-secure-storage", specifier = "==1.0.3" },
     { name = "httpx", specifier = "==0.28.1" },
 ]
 
@@ -239,6 +241,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/f0/27/fd08579aa7669503dd217167f88f5f1dfd7648dd93d2d553a21da6f8a512/flet_platform_assets-1.0.3.tar.gz", hash = "sha256:2aa1cae9769e60f1e259da71e64edc8da2247df81a4b73025b0b7dd63f36e82c", size = 35857, upload-time = "2026-09-30T02:13:42.306Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/36/43/7a41ca60ca024065045e2e9f8faff5d5bb9f2e2b5cb8976ef70d796f2bb3/flet_platform_assets-1.0.3-py3-none-any.whl", hash = "sha256:bafb2bc361aa01c6a4b11c41da7d726b7354cab666587be6d61372e43aef8a72", size = 25678, upload-time = "2026-09-30T02:13:41.324Z" },
+]
+
+[[package]]
+name = "flet-secure-storage"
+version = "1.0.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "flet" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/13/5e/f24a9873ba005dd574fe76ae516efcf61e3e9c11070a5c41708337a5f07e/flet_secure_storage-1.0.3.tar.gz", hash = "sha256:5d165d9f20d54ba94e99cfc99d051afeaa357724f8c3ea6634555002ef93d0d8", size = 15971, upload-time = "2026-09-30T02:14:30.79Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a7/05/ebda273ecae5f04b3149eb3824563923ccfbb7143446ab3695da6f69f55b/flet_secure_storage-1.0.3-py3-none-any.whl", hash = "sha256:6b0ca7c150ab49831aed6d6eb5ef514bfc8e73fffa9b2e9d7f4e4c7802e6be14", size = 16670, upload-time = "2026-09-30T02:14:29.679Z" },
 ]
 
 [[package]]

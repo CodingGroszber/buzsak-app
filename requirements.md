@@ -51,7 +51,7 @@ Values carry a **quality** (`good`, `stale`, `unavailable`, `invalid`). The serv
 The Buzsák App is an **Android-only** mobile client. It:
 - shows every KPI the server holds, live;
 - shows the state of every control signal;
-- lets the operator issue control commands. In the first release only **ValveControl** commands are in scope.
+- lets the operator issue ValveControl commands and server-controlled pulses for both Garage doors.
 
 The app is a *view and command terminal*. It holds no authoritative state of its own.
 
@@ -76,6 +76,7 @@ The app is a *view and command terminal*. It holds no authoritative state of its
 - Android app (phone first; tablet layout SHOULD work).
 - Live, automatically refreshing read-only view of **all** server KPIs, device health and capabilities.
 - ValveControl commands: `set_mode` (manual/automatic) and `set_output` for relay1–relay4.
+- One server-controlled pulse for each Garage device (`sonoff-1`, `sonoff-2`).
 - Tabbed UI with one tab per party, plus an Overview tab and a System tab.
 - Python single-stack implementation (see ARC).
 - Build, run and deploy on the developer machine (Windows 11 with Android Studio tooling) and on physical Android devices.
@@ -84,7 +85,7 @@ The app is a *view and command terminal*. It holds no authoritative state of its
 ### 2.2 Out of scope (release 1.0)
 
 - iOS, web or desktop *distribution*. Desktop runs are allowed for development only.
-- Control of the PLC pumps (`garden_plc.set_output`) and of the Sonoff garage pulse. Both are shown read-only, with the reason they are disabled.
+- Control of the PLC pumps (`garden_plc.set_output`). They remain read-only, with the reason they are disabled.
 - Calls from the app directly to the devices (ESP32 / Matter). These are **forbidden** (see SSOT-03).
 - A local authoritative database, offline command queueing, or offline replay.
 - Google Play publication. Distribution is by sideloaded APK.
@@ -92,7 +93,7 @@ The app is a *view and command terminal*. It holds no authoritative state of its
 
 ### 2.3 Later (backlog candidates, not yet approved)
 
-- PLC pump control and the garage pulse, once their server-side command paths are approved.
+- PLC pump control, once its server-side command path is approved.
 - Remote access over Tailscale.
 - Push notifications, e.g. for a device going offline or low water.
 - Home-screen widget.
@@ -173,7 +174,7 @@ All `automation_*` values are frozen while `mode == manual`. The UI MUST then sh
 | `valve_controller` | `set_output` | `{"name": ["relay1".."relay4"], "state": "bool"}` | Registered, **not implemented** | **Implement** (enabled when the server enables it) |
 | `valve_controller` | `set_mode` | `{"value": ["manual","automatic"]}` | Registered, **not implemented** | **Implement** (enabled when the server enables it) |
 | `garden_plc` | `set_output` | `{"name": ["well_pump","tank_pump"], "state": "bool"}` | Registered, not implemented | Read-only display |
-| `sonoff_minid` | `pulse` | `{}` | **Implemented** | Read-only display, including `last_pulse` status |
+| `sonoff_minid` | `pulse` | `{}` | **Implemented** | Trigger buttons for Garage Right (`sonoff-1`) and Garage Left (`sonoff-2`) |
 
 ---
 
@@ -265,7 +266,7 @@ buzsak_app/
 
 | ID | Requirement |
 |---|---|
-| CTL-01 | Every command MUST be sent to the server (SRV-04) with a client-generated **idempotency key** (UUID4). A manual retry by the user reuses the same key only if it repeats the exact same intent. |
+| CTL-01 | Every command sent through the versioned command API MUST include a client-generated **idempotency key** (UUID4). A manual retry reuses the same key only for the exact same intent. The non-idempotent Garage pulse is governed by CTL-11 and MUST NOT be retried. |
 | CTL-02 | A control is interactive only if all of these hold: the server capability is `enabled`; device health is `healthy`; the relevant parameters are fresh (not stale, quality `good`); and no command is already in flight for the same target. Otherwise the control is disabled, and the reason is shown in plain language. |
 | CTL-03 | Each command MUST show its lifecycle state inline in the Greenhouse control panel: *sending → pending → acknowledged → confirmed*, or *failed / expired / uncertain*, with a state-specific emoji, semantic color and safe reason where available. |
 | CTL-04 | The app MUST NOT retry automatically. A lost submit response offers an explicit same-key retry; an accepted command with unknown outcome offers **Check status** (GET only). Re-dispatching a terminal failed/uncertain command requires a server contract that preserves idempotency and is tracked by B-211. |
@@ -275,6 +276,7 @@ buzsak_app/
 | CTL-08 | Double taps and rapid toggles MUST be debounced: one in-flight command per target. |
 | CTL-09 | The app MUST log every command intent and outcome in an in-app session log, viewable on the System tab. The authoritative audit trail lives on the server. |
 | CTL-10 | The UI MUST NOT imply physical effects it cannot verify. For example, a confirmed valve relay means "relay energized", not "water flowing" (server CMD-19). |
+| CTL-11 | Garage pulses are non-idempotent momentary actions. For either Sonoff, the app MUST submit once and MUST NOT automatically or manually resubmit after an ambiguous outcome. HTTP 202 means accepted only; completion is reported only from a later server `last_pulse` snapshot. An explicit status check is GET-only. Each button MUST be enabled only when that device's pulse capability is enabled, health is healthy, and `on_off` is fresh and good. The UI MUST describe relay/pulse state, never infer door position. |
 
 ---
 
@@ -329,6 +331,8 @@ The reference is a modern data-journalism dashboard. The characteristics to adop
 | UX-20 | UI language for 1.0 is **English**. All user-facing strings live in one module so a Hungarian translation can be added later. |
 | UX-21 | Touch targets are at least 48 dp. The UI supports system font scaling up to 130 % without truncating values. |
 | UX-22 | Portrait is the primary orientation. Landscape and tablet SHOULD use a responsive grid. |
+| UX-23 | The Garage tab is a daily-use control surface: show one compact row per Garage device with its friendly name, explicitly labeled relay state and a clear Trigger action. Keep lifecycle feedback concise and inline; do not repeat the same state in monitoring cards or device-detail headers. |
+| UX-24 | The Android launcher icon and default splash MUST use the supplied Buzsák logo, preserving the artwork with a transparent exterior and an adaptive background color. |
 
 ---
 
@@ -338,7 +342,7 @@ The reference is a modern data-journalism dashboard. The characteristics to adop
 |---|---|
 | SEC-01 | 1.0 targets the trusted home LAN. The server now serves HTTPS ([ADR-0003](docs/adr/0003-https-pinned-ca-memory-token.md)). The Android cleartext permission ([ADR-0002](docs/adr/0002-cleartext-http.md)) remains only for the fake server and MUST be removed once the fake server speaks TLS. |
 | SEC-02 | The API client MUST send the **bearer token** (`Authorization: Bearer …`) and, for HTTPS, MUST verify the server certificate against the pinned root CA only (`api/trust.py`). A rejected token and an untrusted certificate MUST each show their own message. |
-| SEC-03 | Tokens MUST be stored only in Android secure storage (Keystore-backed). If that is not used, the token is not persisted: **current decision, [ADR-0003](docs/adr/0003-https-pinned-ca-memory-token.md): memory only** (B-302 tracks Keystore storage). Tokens MUST NEVER be logged, committed or shown in full. |
+| SEC-03 | After the server accepts an authenticated state request, the app MUST save the bearer token only through Android secure storage backed by Android Keystore; it MUST NOT enter ordinary preferences or logs. The token MUST remain stored until explicit sign-out, app uninstall or OS credential-store loss. The server remains authoritative for expiry and revocation; the app MUST NOT extend or bypass server token lifetime. Fake/live launcher credentials are session-only. |
 | SEC-04 | The repository MUST NOT contain secrets, signing keystores or passwords. Release signing material lives outside the repo, and its path is passed through environment variables. |
 | SEC-05 | The app MUST NOT log raw server payloads at INFO level or above. |
 | SEC-06 | Validate every server response before use. Treat the server as trusted for content but not for well-formedness (SRV-11). |

@@ -15,6 +15,7 @@ from buzsak_app.ui.components import (
     muted_text,
 )
 from buzsak_app.ui.greenhouse_controls import CommandHandler, CommandLookup, GreenhouseControls
+from buzsak_app.ui.garage_controls import GaragePulseControl, PulseHandler, PulseLookup
 from buzsak_app.ui.theme import SPACING
 from buzsak_app.ui.view_models import device_detail, health_view, kpi_view, sorted_parameters
 
@@ -23,7 +24,13 @@ _MODE = "mode"
 
 
 class _DeviceSection:
-    def __init__(self, device: Device, *, greenhouse: GreenhouseControls | None = None) -> None:
+    def __init__(
+        self,
+        device: Device,
+        *,
+        greenhouse: GreenhouseControls | None = None,
+        garage: GaragePulseControl | None = None,
+    ) -> None:
         self.device_id = device.id
         self._label = device.label
         self._health = StatusChip()
@@ -33,15 +40,18 @@ class _DeviceSection:
         self._cards: dict[str, KpiCard] = {}
         self._order: list[str] = []
         self._greenhouse = greenhouse
+        self._garage = garage
         contents = [device_header(device.label, self._health, self._detail)]
         if greenhouse is not None:
             contents.append(greenhouse.control)
+        if garage is not None:
+            contents.append(garage.control)
         contents.append(self._grid)
         body = ft.Column(
             contents,
             spacing=SPACING.md,
         )
-        if greenhouse is not None:
+        if greenhouse is not None or garage is not None:
             self.control = ft.ResponsiveRow(
                 [ft.Container(
                     content=body,
@@ -58,6 +68,8 @@ class _DeviceSection:
         """`changed` is the set of parameter ids to refresh; None refreshes all."""
         if self._greenhouse is not None:
             self._greenhouse.sync(device)
+        if self._garage is not None:
+            self._garage.sync(device)
         parameters = sorted_parameters(device)
         if self._greenhouse is not None:
             handled = self._greenhouse._readings.handled_parameter_ids
@@ -92,14 +104,41 @@ class PartyTab:
         page: ft.Page | None = None,
         on_command: CommandHandler | None = None,
         on_check_command: CommandLookup | None = None,
+        on_pulse: PulseHandler | None = None,
+        on_check_pulse: PulseLookup | None = None,
     ) -> None:
         self.party_id = party.id
         self._sections: dict[str, _DeviceSection] = {}
+        self._garage_controls: dict[str, GaragePulseControl] = {}
         if not party.configured:
             self.control: ft.Control = centered_message(
                 party.note or strings.PARTY_NOT_CONFIGURED)
         elif not party.devices:
             self.control = centered_message(strings.PARTY_NO_DEVICES)
+        elif party.kind == "matter" and any(
+            device.id in {"sonoff-1", "sonoff-2"} for device in party.devices
+        ):
+            devices = [
+                device for device in party.devices
+                if device.id in {"sonoff-1", "sonoff-2"}
+            ]
+            self._garage_controls = {
+                device.id: GaragePulseControl(
+                    device, page=page, on_pulse=on_pulse,
+                    on_check=on_check_pulse,
+                )
+                for device in devices
+            }
+            rows: list[ft.Control] = []
+            for index, device in enumerate(devices):
+                if index:
+                    rows.append(ft.Divider(height=1))
+                rows.append(self._garage_controls[device.id].control)
+            self.control = ft.Container(
+                content=ft.Column(rows, spacing=0),
+                padding=ft.Padding.all(SPACING.md),
+                expand=True,
+            )
         else:
             sections = []
             for device in party.devices:
@@ -123,6 +162,12 @@ class PartyTab:
 
     def apply(self, party: Party, diff: SnapshotDiff) -> None:
         for device in party.devices:
+            garage = self._garage_controls.get(device.id)
+            if garage is not None and (
+                device.id in diff.changed_devices
+                or any(did == device.id for did, _ in diff.changed_parameters)
+            ):
+                garage.sync(device)
             section = self._sections.get(device.id)
             if section is None:
                 continue

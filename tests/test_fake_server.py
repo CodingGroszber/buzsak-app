@@ -6,13 +6,24 @@ import asyncio
 import importlib.util
 import sys
 import threading
+from types import SimpleNamespace
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
 
-from buzsak_app.api.client import CommandApiError, MalformedResponse, ServerClient
+from buzsak_app.api.client import (
+    CommandApiError,
+    MalformedResponse,
+    PulseRejected,
+    ServerClient,
+)
+from buzsak_app.domain.clock import SystemClock
 from buzsak_app.domain.snapshot import parse_snapshot
+from buzsak_app.settings import Settings
+from buzsak_app.state.poller import Poller
+from buzsak_app.state.store import Store
+from buzsak_app.ui.app import Runtime
 
 _SPEC = importlib.util.spec_from_file_location(
     "buzsak_fake_server_test",
@@ -25,6 +36,29 @@ sys.modules[_SPEC.name] = _FAKE_SERVER
 _SPEC.loader.exec_module(_FAKE_SERVER)
 FakeApi = _FAKE_SERVER.FakeApi
 Handler = _FAKE_SERVER.Handler
+
+
+class StubPage:
+    def update(self) -> None:
+        pass
+
+
+class FakeSettingsRepository:
+    async def save(self, settings: Settings) -> bool:
+        return True
+
+
+class FakeTokenRepository:
+    def __init__(self, token: str | None = None) -> None:
+        self.token = token
+
+    async def save(self, token: str) -> bool:
+        self.token = token
+        return True
+
+    async def clear(self) -> bool:
+        self.token = None
+        return True
 
 
 class FakeTestHttpServer(ThreadingHTTPServer):
@@ -111,6 +145,148 @@ def test_fake_server_requires_operator_for_commands_but_viewer_can_read(fake_api
             return rejected.value
 
     assert asyncio.run(exercise()).code == "forbidden"
+
+
+def test_fake_server_pulse_is_simulated_and_reports_status_without_changing_relay(
+    fake_api_server,
+) -> None:
+    url, _ = fake_api_server
+
+    async def exercise():
+        async with ServerClient(url, token="fake-operator") as client:
+            before = parse_snapshot(await client.fetch_state())
+            garage = next(
+                party for party in before.parties if party.kind == "matter")
+            left = next(
+                device for device in garage.devices if device.id == "sonoff-2")
+            receipt = await client.request_pulse(left.id)
+            pending = parse_snapshot(await client.fetch_state())
+            latest_garage = next(
+                party for party in pending.parties if party.kind == "matter")
+            latest_left = next(
+                device for device in latest_garage.devices if device.id == "sonoff-2")
+            assert latest_left.last_pulse is not None
+            assert latest_left.last_pulse.status == "pending"
+            with pytest.raises(PulseRejected, match="cooldown"):
+                await client.request_pulse(left.id)
+            after = parse_snapshot(await client.fetch_state())
+            latest_garage = next(
+                party for party in after.parties if party.kind == "matter")
+            latest_left = next(
+                device for device in latest_garage.devices if device.id == "sonoff-2")
+            return receipt, left, latest_left
+
+    receipt, before, after = asyncio.run(exercise())
+    assert receipt.request_id == 1
+    assert before.parameter("on_off").value is False
+    assert after.parameter("on_off").value is False
+    assert after.last_pulse is not None
+    assert after.last_pulse.status == "succeeded"
+
+
+@pytest.mark.parametrize("device_id,expected_statuses", [
+    ("sonoff-1", ["sent", "succeeded"]),
+    ("sonoff-2", ["sent", "pending", "succeeded"]),
+])
+def test_runtime_submits_one_pulse_and_observes_completion_through_poller(
+    fake_api_server, device_id: str, expected_statuses: list[str],
+) -> None:
+    url, api = fake_api_server
+
+    async def exercise():
+        async with ServerClient(url, token="fake-operator") as client:
+            runtime = object.__new__(Runtime)
+            runtime._client = client
+            runtime.settings = SimpleNamespace(
+                command_timeout_s=2, request_timeout_s=2)
+            runtime.store = Store(SystemClock())
+            runtime._poller = Poller(
+                client.fetch_state, runtime.store, interval_s=30)
+            poll_task = asyncio.create_task(runtime._poller.run())
+            statuses: list[str] = []
+            try:
+                result = await asyncio.wait_for(
+                    runtime.execute_pulse(
+                        device_id, None,
+                        lambda status, _reason, _request_id: statuses.append(
+                            status),
+                    ),
+                    timeout=4,
+                )
+                snapshot = runtime.store.state.snapshot
+                left = next(
+                    device for party in snapshot.parties
+                    for device in party.devices if device.id == device_id)
+                return result, statuses, left
+            finally:
+                runtime._poller.stop()
+                await poll_task
+
+    result, statuses, left = asyncio.run(exercise())
+    assert result == "succeeded"
+    assert statuses == expected_statuses
+    assert api._pulse_request_id == 1
+    assert left.last_pulse is not None and left.last_pulse.status == "succeeded"
+
+
+def test_runtime_saves_token_only_after_server_authentication(fake_api_server) -> None:
+    url, _ = fake_api_server
+    credentials = FakeTokenRepository()
+    runtime = Runtime(
+        StubPage(), FakeSettingsRepository(), Settings(),
+        token_repo=credentials,
+    )
+    runtime.start = lambda: None
+
+    error = asyncio.run(runtime.save_connection(url, "fake-operator"))
+
+    assert error is None
+    assert credentials.token == "fake-operator"
+    assert runtime.settings.token == "fake-operator"
+    assert "token" not in runtime.settings.to_storage()
+
+
+def test_runtime_does_not_save_a_rejected_token(fake_api_server) -> None:
+    url, _ = fake_api_server
+    credentials = FakeTokenRepository()
+    runtime = Runtime(
+        StubPage(), FakeSettingsRepository(), Settings(),
+        token_repo=credentials,
+    )
+    runtime.start = lambda: None
+
+    error = asyncio.run(runtime.save_connection(url, "not-a-token"))
+
+    assert error is not None
+    assert credentials.token is None
+    assert runtime.settings.token is None
+
+
+def test_runtime_sign_out_clears_token_without_server_access() -> None:
+    credentials = FakeTokenRepository("saved-token")
+    runtime = Runtime(
+        StubPage(), FakeSettingsRepository(), Settings(token="saved-token"),
+        token_repo=credentials,
+    )
+    runtime.start = lambda: None
+
+    error = asyncio.run(runtime.save_connection(
+        "https://unreachable.invalid", ""))
+
+    assert error is None
+    assert credentials.token is None
+    assert runtime.settings.token is None
+
+
+@pytest.mark.parametrize("scenario", ["stale", "offline"])
+def test_fake_server_refuses_garage_pulse_without_fresh_healthy_telemetry(
+    scenario: str,
+) -> None:
+    api = FakeApi(scenario)
+    status, body = api.pulse("sonoff-2")
+    assert status == 503
+    assert body["status"] == "rejected"
+    assert "unavailable" in body["reason"]
 
 
 def test_fake_server_same_key_deduplicates_and_rejects_changed_payload(fake_api_server) -> None:

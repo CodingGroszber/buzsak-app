@@ -13,21 +13,27 @@ import os
 import sys
 from dataclasses import replace
 from collections.abc import Callable, Mapping
+from datetime import datetime
 from typing import Any
 
 import flet as ft
+import flet_secure_storage as fss
 
 from buzsak_app.api.client import (
+    ApiError,
     ConnectionFailed,
     ServerClient,
+    Unauthorized,
 )
 from buzsak_app.domain.clock import Clock, SystemClock
+from buzsak_app.domain.snapshot import SnapshotFormatError, parse_snapshot
 from buzsak_app.domain.staleness import stale_server_data_age_s
 from buzsak_app.settings import DEFAULT_SERVER_URL, Settings
 from buzsak_app.state.connection import ConnectionStatus, age_s, is_overdue
 from buzsak_app.state.diff import SnapshotDiff
 from buzsak_app.state.poller import Poller
 from buzsak_app.state.settings_repo import SettingsRepository
+from buzsak_app.state.token_repository import SecureTokenRepository
 from buzsak_app.state.store import AppState, Store
 from buzsak_app.ui import strings, theme
 from buzsak_app.ui.components import StatusChip, centered_message, muted_text
@@ -37,12 +43,32 @@ from buzsak_app.ui.system_tab import SystemTab
 from buzsak_app.ui.theme import SPACING, TYPE
 from buzsak_app.ui.view_models import Badge, Tone, connection_view, duration_text, freshness_text
 from buzsak_app.ui.greenhouse_controls import CommandHandler
+from buzsak_app.ui.garage_controls import PulseHandler, PulseLookup
+from buzsak_app.domain.models import Device, LastPulse, Snapshot
 
 logger = logging.getLogger(__name__)
 
 _OVERVIEW, _SYSTEM = "overview", "system"
 _FAKE_PREVIEW_URL = "http://127.0.0.1:8765"
 _FAKE_PREVIEW_TOKEN = "fake-operator"
+
+
+def _device_from_snapshot(snapshot: Snapshot | None, device_id: str) -> Device | None:
+    if snapshot is None:
+        return None
+    for party in snapshot.parties:
+        for device in party.devices:
+            if device.id == device_id:
+                return device
+    return None
+
+
+def _is_new_pulse(pulse: LastPulse | None, baseline: datetime | None) -> bool:
+    return (
+        pulse is not None
+        and pulse.requested_at is not None
+        and (baseline is None or pulse.requested_at != baseline)
+    )
 
 
 def _preview_settings(
@@ -91,6 +117,8 @@ class AppView:
         preview_mode: bool = False,
         on_tab_selected: Callable[[str], None] | None = None,
         live_mode: bool = False,
+        on_pulse: PulseHandler | None = None,
+        on_check_pulse: PulseLookup | None = None,
     ) -> None:
         self._page = page
         self._store = store
@@ -98,6 +126,8 @@ class AppView:
         self._clock = clock
         self._on_command = on_command
         self._on_check_command = on_check_command
+        self._on_pulse = on_pulse
+        self._on_check_pulse = on_check_pulse
         self._on_tab_selected = on_tab_selected
         self._simulation = StatusChip(
             strings.SIMULATION_LABEL, "science", Tone.WARNING)
@@ -146,8 +176,32 @@ class AppView:
             padding=ft.Padding.only(
                 left=SPACING.md, right=SPACING.md, top=SPACING.sm),
         )
-        self.control = ft.Column(
-            [header, self._banner, self._tabs_host], spacing=0, expand=True)
+        self._watermark = ft.Container(
+            content=ft.Image(
+                src="assets/app_logo_transparent.png",
+                width=300,
+                height=300,
+                fit=ft.BoxFit.CONTAIN,
+                exclude_from_semantics=True,
+            ),
+            alignment=ft.Alignment.CENTER,
+            expand=True,
+            opacity=0.5,
+            ignore_interactions=True,
+        )
+        self.control = ft.Stack(
+            controls=[
+                self._watermark,
+                ft.Column(
+                    [header, self._banner, self._tabs_host],
+                    spacing=0,
+                    expand=True,
+                ),
+            ],
+            alignment=ft.Alignment.CENTER,
+            fit=ft.StackFit.EXPAND,
+            expand=True,
+        )
 
         self._rebuild_tabs()
         self.render_status(store.state)
@@ -227,6 +281,8 @@ class AppView:
                 tab = PartyTab(
                     party, page=self._page, on_command=self._on_command,
                     on_check_command=self._on_check_command,
+                    on_pulse=self._on_pulse,
+                    on_check_pulse=self._on_check_pulse,
                 )
                 self._party_tabs[party.id] = tab
                 entries.append((party.id, strings.party_title(
@@ -280,11 +336,13 @@ class Runtime:
         repo: SettingsRepository,
         settings: Settings,
         *,
+        token_repo: SecureTokenRepository | None = None,
         preview_mode: bool = False,
         live_mode: bool = False,
     ) -> None:
         self._page = page
         self._repo = repo
+        self._token_repo = token_repo
         self._preview_mode = preview_mode
         self._live_mode = live_mode
         self._session_only = preview_mode or live_mode
@@ -294,7 +352,9 @@ class Runtime:
         self.view = AppView(page, self.store, settings,
                             self.clock, self.save_connection, self.execute_command,
                             self.check_command_status, preview_mode,
-                            self.refresh_selected_party, live_mode)
+                            self.refresh_selected_party, live_mode,
+                            on_pulse=self.execute_pulse,
+                            on_check_pulse=self.check_pulse_status)
         self._client: ServerClient | None = None
         self._poller: Poller | None = None
         self._task: asyncio.Task | None = None
@@ -326,16 +386,48 @@ class Runtime:
         self._client = self._poller = self._task = None
 
     async def save_connection(self, url: str, token: str) -> str | None:
-        """Validate and switch to a new address and token; returns an error message or None.
-
-        Only the address is persisted; the token lives in memory (SEC-03, ADR-0003).
-        """
+        """Verify and switch credentials; persist tokens only in secure storage (SEC-03, ADR-0006)."""
         try:
-            new = replace(self.settings, server_url=url.strip(),
-                          token=token.strip() or None)
+            token = token.strip()
+            new = replace(
+                self.settings, server_url=url.strip(), token=token or None)
         except ValueError:
             return strings.ERROR_BAD_URL
         await self.stop()
+
+        if not self._session_only and token:
+            if self._token_repo is None:
+                self.start()
+                return strings.ERROR_SECURE_STORAGE_UNAVAILABLE
+            verifier = ServerClient(
+                new.server_url, token=token,
+                timeout_s=new.request_timeout_s,
+            )
+            try:
+                parse_snapshot(await verifier.fetch_state())
+            except Unauthorized:
+                await verifier.aclose()
+                self.start()
+                return strings.ERROR_TOKEN_REJECTED
+            except (ApiError, SnapshotFormatError):
+                await verifier.aclose()
+                self.start()
+                return strings.ERROR_TOKEN_VERIFY
+            except Exception as error:
+                logger.warning(
+                    "token verification failed (%s)", type(error).__name__)
+                await verifier.aclose()
+                self.start()
+                return strings.ERROR_TOKEN_VERIFY
+            await verifier.aclose()
+            if not await self._token_repo.save(token):
+                self.start()
+                return strings.ERROR_SECURE_STORAGE_UNAVAILABLE
+        elif not self._session_only and self._token_repo is not None:
+            if not await self._token_repo.clear():
+                self.start()
+                return strings.ERROR_SECURE_STORAGE_UNAVAILABLE
+
         self.settings = new
         self.view.set_settings(new)
         if not self._session_only:
@@ -395,6 +487,101 @@ class Runtime:
             self._poller.poll_now()
         return status.status
 
+    async def execute_pulse(
+        self,
+        device_id: str,
+        baseline: datetime | None,
+        on_status: Callable[[str, str | None, str | None], None],
+    ) -> str:
+        """Submit one pulse, then observe server snapshots without retransmission (CTL-11)."""
+        client = self._client
+        if client is None:
+            raise ConnectionFailed("server connection is not running")
+        receipt = await client.request_pulse(device_id)
+        request_id = str(receipt.request_id)
+        on_status("sent", None, request_id)
+        pulse = await self._wait_for_pulse(
+            device_id, baseline, self.settings.command_timeout_s,
+            on_status=on_status, request_id=request_id)
+        if _is_new_pulse(pulse, baseline):
+            status = pulse.status
+            if status in {"succeeded", "failed", "expired"}:
+                return status
+            if status in {"pending", "dispatching", "sent"}:
+                return status
+        on_status("uncertain", "client_confirmation_timeout", request_id)
+        return "uncertain"
+
+    async def check_pulse_status(
+        self,
+        device_id: str,
+        baseline: datetime | None,
+        on_status: Callable[[str, str | None, str | None], None],
+    ) -> str:
+        """Explicit GET-only status check after an ambiguous pulse result (CTL-11)."""
+        if self._client is None or self._poller is None:
+            raise ConnectionFailed("server connection is not running")
+        pulse = await self._wait_for_pulse(
+            device_id, baseline, self.settings.request_timeout_s,
+            on_status=on_status)
+        if not _is_new_pulse(pulse, baseline):
+            return "uncertain"
+        return pulse.status
+
+    async def _wait_for_pulse(
+        self,
+        device_id: str,
+        baseline: datetime | None,
+        timeout_s: float,
+        *,
+        on_status: Callable[[str, str | None, str | None], None] | None = None,
+        request_id: str | None = None,
+    ) -> LastPulse | None:
+        poller = self._poller
+        if poller is None:
+            raise ConnectionFailed("server connection is not running")
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout_s
+        last_received_at = self.store.state.received_at
+        last_status: str | None = None
+        first_poll_requested = False
+        while loop.time() < deadline:
+            event = asyncio.Event()
+            unsubscribe = self.store.subscribe(
+                lambda _state, _diff: event.set())
+            try:
+                if not first_poll_requested:
+                    poller.poll_now()
+                    first_poll_requested = True
+                state = self.store.state
+                device = _device_from_snapshot(state.snapshot, device_id)
+                pulse = device.last_pulse if device is not None else None
+                if _is_new_pulse(pulse, baseline):
+                    if pulse.status in {"succeeded", "failed", "expired"}:
+                        if on_status is not None:
+                            on_status(pulse.status, pulse.error, request_id)
+                        return pulse
+                    if pulse.status != last_status:
+                        last_status = pulse.status
+                        if on_status is not None:
+                            on_status(pulse.status, pulse.error, request_id)
+                    if state.received_at != last_received_at:
+                        last_received_at = state.received_at
+                        poller.poll_now()
+                elif state.received_at != last_received_at:
+                    last_received_at = state.received_at
+                remaining = deadline - loop.time()
+                if remaining <= 0:
+                    break
+                try:
+                    await asyncio.wait_for(event.wait(), min(remaining, 1.0))
+                except TimeoutError:
+                    pass
+            finally:
+                unsubscribe()
+        device = _device_from_snapshot(self.store.state.snapshot, device_id)
+        return device.last_pulse if device is not None else None
+
     def on_lifecycle(self, event: ft.AppLifecycleStateChangeEvent) -> None:
         """Pause polling in the background and resume at once on return (UPD-03)."""
         poller = self._poller
@@ -442,17 +629,6 @@ async def main(page: ft.Page) -> None:
     page.dark_theme = theme.app_theme(dark=True)
     page.theme_mode = ft.ThemeMode.SYSTEM
 
-    # Show something first: sending the page is what attaches the storage service.
-    prefs = ft.SharedPreferences()
-    host = ft.SafeArea(expand=True, content=centered_message(strings.LOADING))
-    page.add(host)
-
-    repo = SettingsRepository(prefs)
-    settings = Settings()
-    if await wait_until_attached(prefs):
-        settings = await repo.load()
-    else:
-        logger.warning("settings storage unavailable; using defaults")
     preview_mode = (
         os.environ.get("BUZSAK_FAKE_SERVER_PREVIEW") == "1"
         and sys.platform == "win32"
@@ -463,6 +639,34 @@ async def main(page: ft.Page) -> None:
     )
     if preview_mode and live_mode:
         raise RuntimeError("fake and live desktop sessions cannot be combined")
+
+    # Show something first: sending the page is what attaches each storage service.
+    prefs = ft.SharedPreferences()
+    secure_storage = fss.SecureStorage(
+        android_options=fss.AndroidOptions(
+            reset_on_error=False,
+            migrate_on_algorithm_change=True,
+        )
+    )
+    host = ft.SafeArea(expand=True, content=centered_message(strings.LOADING))
+    page.add(host)
+
+    repo = SettingsRepository(prefs)
+    token_repo = SecureTokenRepository(secure_storage)
+    settings = Settings()
+    prefs_ready, secure_storage_ready = await asyncio.gather(
+        wait_until_attached(prefs),
+        wait_until_attached(secure_storage),
+    )
+    if prefs_ready:
+        settings = await repo.load()
+    else:
+        logger.warning("settings storage unavailable; using defaults")
+    if secure_storage_ready and not (preview_mode or live_mode):
+        settings = replace(settings, token=await token_repo.load())
+    elif not secure_storage_ready and not (preview_mode or live_mode):
+        logger.warning(
+            "secure credential storage unavailable; sign-in required")
     settings = _preview_settings(
         settings,
         enabled=preview_mode,
@@ -476,7 +680,8 @@ async def main(page: ft.Page) -> None:
         token=os.environ.get("BUZSAK_LIVE_SERVER_TOKEN"),
     )
     runtime = Runtime(
-        page, repo, settings, preview_mode=preview_mode, live_mode=live_mode,
+        page, repo, settings, token_repo=token_repo,
+        preview_mode=preview_mode, live_mode=live_mode,
     )
     page.on_app_lifecycle_state_change = runtime.on_lifecycle
     host.content = runtime.view.control

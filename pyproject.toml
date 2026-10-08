@@ -8,6 +8,7 @@ requires-python = ">=3.11,<3.13"
 # flet build ignores uv.lock and reads these, so runtime deps must be pinned exactly here (BLD-10).
 dependencies = [
     "flet==1.0.3",
+    "flet-secure-storage==1.0.3",
     "httpx==0.28.1",
 ]
 
@@ -29,6 +30,7 @@ pythonpath = ["src"]
 [tool.flet]
 product = "Buzsák"
 org = "hu.buzsak"
+icon_background = "#171B26"
 
 [tool.flet.app]
 path = "src"
@@ -36,6 +38,8 @@ path = "src"
 # Cleartext is retained for the local HTTP fake API only (SEC-01, ADR-0002/0003).
 [tool.flet.android.manifest_application]
 usesCleartextTraffic = "true"
+allowBackup = "false"
+fullBackupContent = "false"
 
 [build-system]
 requires = ["uv_build>=0.12.5,<0.13.0"]

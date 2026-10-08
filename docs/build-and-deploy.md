@@ -62,7 +62,7 @@ On a physical phone: enable Developer options, turn on USB debugging, plug it in
 
 The phone must be on the same network as the server (`https://192.168.1.95`). The emulator reaches the LAN through the host. Change the address on the app's System tab if needed. The app reads the server snapshot only; ESP32 webpage changes reach it through the Pi poller, and app commands reach the device through the Pi dispatcher.
 
-The server needs a bearer token. An administrator issues one on the Pi (`manage_credentials.py issue <principal-id> viewer|operator`; see the server README, "Connecting a Client"). Type it into the System tab; it is kept in memory only, so enter it again after each app start (ADR-0003). Never paste it into chat, the repo or a URL. The server's root CA is already built into the app, so nothing needs installing on the phone.
+The server needs a bearer token. An administrator issues one on the Pi (`manage_credentials.py issue <principal-id> viewer|operator`; see the server README, "Connecting a Client"). Enter it in the System tab and save; after the server accepts an authenticated state request, the app stores it encrypted with Android Keystore and reloads it at startup (ADR-0006). Use **Sign out** to remove it. The server can still expire or revoke the token. Never paste it into chat, the repo or a URL. The server's root CA is already built into the app, so nothing needs installing on the phone.
 
 ### Simulated command testing (BLD-08, TST-06)
 
@@ -113,6 +113,7 @@ All in `pyproject.toml`:
 - `[project].dependencies` is what ends up in the APK, and `flet build` **ignores `uv.lock`**. Pin runtime dependencies with `==` there (BLD-10).
 - `requires-python = ">=3.11,<3.13"`: `flet build` bundles the highest supported Python the range allows, so the cap keeps the APK on 3.12.
 - `[tool.flet.app] path = "src"`: the entry point is `src/main.py` and assets go in `src/assets/`.
+- `src/assets/icon.png` supplies the launcher icon and default splash artwork. It is derived from `assets/app_logo.jpg` with transparent exterior pixels; `[tool.flet].icon_background` supplies the navy adaptive-icon field.
 - `[tool.flet] product` and `org` set the launcher name and the application id prefix.
 
 Build outputs go to `build/` and are git-ignored together with `*.apk`, `*.aab` and keystores (BLD-12, SEC-04).

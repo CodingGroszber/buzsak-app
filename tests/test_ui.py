@@ -15,6 +15,7 @@ from buzsak_app.state.store import Store
 from buzsak_app.ui import strings, theme
 from buzsak_app.ui.app import AppView, _live_settings, _preview_settings
 from buzsak_app.ui.components import KpiCard
+from buzsak_app.ui.command_visuals import pulse_button_visual
 from buzsak_app.ui.party_tab import PartyTab
 from buzsak_app.ui.view_models import Tone, kpi_view
 
@@ -314,6 +315,22 @@ def test_the_token_field_is_masked_and_saved_with_the_address(clock) -> None:
     assert saved == [(Settings().server_url, "new-token")]
 
 
+def test_sign_out_clears_the_token_field_and_reports_removal(clock) -> None:
+    saved = []
+
+    async def save(url: str, token: str) -> str | None:
+        saved.append((url, token))
+        return None
+
+    view = AppView(
+        StubPage(), Store(clock), Settings(token="saved-token"), clock, save)
+    asyncio.run(view._system._sign_out(None))
+
+    assert saved == [(Settings().server_url, "")]
+    assert view._system._token.value == ""
+    assert view._system._message.value == strings.SYSTEM_SIGNED_OUT
+
+
 def test_freshness_moves_with_the_clock_and_warns_when_overdue(clock) -> None:
     view, store, _ = _view(clock)
     store.apply_snapshot(_snapshot())
@@ -361,3 +378,37 @@ def test_unconfigured_party_tab_explains_itself() -> None:
 def test_a_party_without_devices_says_so() -> None:
     tab = PartyTab(_snapshot("matter_unconfigured").parties[0])
     assert tab.control.content.value == strings.PARTY_NO_DEVICES
+
+
+def test_garage_has_compact_trigger_rows_for_both_devices() -> None:
+    party = next(p for p in _snapshot().parties if p.kind == "matter")
+    left = next(device for device in party.devices if device.id == "sonoff-2")
+    right = next(device for device in party.devices if device.id == "sonoff-1")
+
+    async def pulse(_device_id, _baseline, _on_status):
+        return "succeeded"
+
+    tab = PartyTab(party, on_pulse=pulse, on_check_pulse=pulse)
+    left_control = tab._garage_controls["sonoff-2"]
+    right_control = tab._garage_controls["sonoff-1"]
+
+    assert pulse_button_visual(left).label == strings.GARAGE_TRIGGER
+    assert pulse_button_visual(right).label == strings.GARAGE_TRIGGER
+    assert left_control._label.value == strings.GARAGE_LEFT
+    assert right_control._label.value == strings.GARAGE_RIGHT
+    assert left_control._button.content == strings.GARAGE_TRIGGER
+    assert right_control._button.content == strings.GARAGE_TRIGGER
+    assert not left_control._button.disabled
+    assert not right_control._button.disabled
+    assert left_control._relay._text.value == strings.GARAGE_RELAY_INACTIVE
+    assert right_control._relay._text.value == strings.GARAGE_RELAY_INACTIVE
+    assert not left_control._message.visible
+    assert not right_control._message.visible
+
+
+def test_garage_triggers_are_disabled_without_handlers() -> None:
+    party = next(p for p in _snapshot().parties if p.kind == "matter")
+    tab = PartyTab(party)
+
+    assert tab._garage_controls["sonoff-1"]._button.disabled
+    assert tab._garage_controls["sonoff-2"]._button.disabled
