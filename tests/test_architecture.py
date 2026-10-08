@@ -1,4 +1,4 @@
-"""Enforce the layering rules by inspecting imports (ARC-04, ARC-05, SRV-10)."""
+"""Enforce package import boundaries and top-level UI module ownership (ARC-04, ARC-06, SRV-10)."""
 
 from __future__ import annotations
 
@@ -64,6 +64,24 @@ def test_only_api_uses_httpx() -> None:
         for name in _imports(path):
             assert name.split(
                 ".")[0] != "httpx", f"{path} must go through api/ (SRV-10)"
+
+
+def test_composition_view_and_runtime_have_separate_modules() -> None:
+    app_tree = ast.parse((PKG / "ui" / "app.py").read_text(encoding="utf-8"))
+    view_tree = ast.parse(
+        (PKG / "ui" / "app_view.py").read_text(encoding="utf-8"))
+    runtime_tree = ast.parse(
+        (PKG / "ui" / "runtime.py").read_text(encoding="utf-8"))
+    app_classes = {
+        node.name for node in app_tree.body if isinstance(node, ast.ClassDef)}
+    view_classes = {
+        node.name for node in view_tree.body if isinstance(node, ast.ClassDef)}
+    runtime_classes = {
+        node.name for node in runtime_tree.body if isinstance(node, ast.ClassDef)}
+
+    assert "AppView" not in app_classes and "Runtime" not in app_classes
+    assert "AppView" in view_classes
+    assert "Runtime" in runtime_classes
 
 
 @pytest.mark.parametrize("module", sorted(LEAF_MODULES))

@@ -13,7 +13,8 @@ from buzsak_app.settings import DEFAULT_SERVER_URL, Settings
 from buzsak_app.state.connection import ConnectionStatus
 from buzsak_app.state.store import Store
 from buzsak_app.ui import strings, theme
-from buzsak_app.ui.app import AppView, _live_settings, _preview_settings
+from buzsak_app.ui.app import _live_settings, _preview_settings
+from buzsak_app.ui.app_view import AppView
 from buzsak_app.ui.components import KpiCard
 from buzsak_app.ui.command_visuals import pulse_button_visual
 from buzsak_app.ui.party_tab import PartyTab

@@ -261,7 +261,7 @@ def test_handled_greenhouse_values_do_not_repeat_in_generic_cards(clock) -> None
     from conftest import load_state_fixture
     from buzsak_app.domain.snapshot import parse_snapshot
     from buzsak_app.state.store import Store
-    from buzsak_app.ui.app import AppView
+    from buzsak_app.ui.app_view import AppView
     from buzsak_app.settings import Settings
 
     class Page:

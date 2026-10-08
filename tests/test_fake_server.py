@@ -23,7 +23,7 @@ from buzsak_app.domain.snapshot import parse_snapshot
 from buzsak_app.settings import Settings
 from buzsak_app.state.poller import Poller
 from buzsak_app.state.store import Store
-from buzsak_app.ui.app import Runtime
+from buzsak_app.ui.runtime import Runtime
 
 _SPEC = importlib.util.spec_from_file_location(
     "buzsak_fake_server_test",

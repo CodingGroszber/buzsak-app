@@ -57,7 +57,7 @@ Last reviewed: 2026-10-08 (secure token persistence implementation). See the che
 
 ## Checkpoint 3 summary (2026-10-08)
 
-**State:** 378 tests pass. The Garage tab has compact Right/Left Trigger rows with fail-closed per-device health/quality/capability gating, concise lifecycle feedback, and server-snapshot status. The loopback fake server verifies pending-to-succeeded, cooldown, and stale/offline rejection without hardware access.
+**State:** 379 tests pass. The Garage tab has compact Right/Left Trigger rows with fail-closed per-device health/quality/capability gating, concise lifecycle feedback, and server-snapshot status. The loopback fake server verifies pending-to-succeeded, cooldown, and stale/offline rejection without hardware access.
 
 **Verified live:** one explicitly approved `sonoff-2` pulse was accepted as request 4. A later GET reported `last_pulse=succeeded`, with no error; device health was healthy and `on_off` remained false. This confirms the pulse lifecycle only, not garage-door position. No Garage Right pulse was sent.
 
@@ -65,7 +65,7 @@ Last reviewed: 2026-10-08 (secure token persistence implementation). See the che
 
 ## Checkpoint 4 summary (2026-10-08)
 
-**State:** 378 tests pass. Bearer credentials now load/save via pinned Flet Secure Storage, backed by Android Keystore. A token is remembered only after a valid authenticated state snapshot; explicit Sign out removes it. Ordinary preferences and logs remain token-free, and Android backup is disabled for the Keystore entry.
+**State:** 379 tests pass. Bearer credentials now load/save via pinned Flet Secure Storage, backed by Android Keystore. A token is remembered only after a valid authenticated state snapshot; explicit Sign out removes it. Ordinary preferences and logs remain token-free, and Android backup is disabled for the Keystore entry.
 
 **Still open:** Build/install this version and verify save, force-stop/relaunch persistence, invalid-token behavior, and Sign out on a physical Android device (B-302, B-154). The server may still expire or revoke credentials.
 
@@ -151,7 +151,7 @@ Last reviewed: 2026-10-08 (secure token persistence implementation). See the che
 | B-143 | Write `scripts/device.ps1` (live run with `flet debug android`) | BLD-03 | P0 | written, not yet run |
 | B-144 | Write `scripts/build-debug.ps1`, `install.ps1`, `logs.ps1` and `deploy.ps1` | BLD-04, BLD-06, BLD-07 | P0 | doing (build, install and launch verified on the emulator; fixed a UTF-8 crash in Flet's logger that made a good build report failure; `logs.ps1` shows nothing for the app's Python output, see B-149; `deploy.ps1` as a whole not yet run) |
 | B-145 | Configure Android cleartext HTTP; write an ADR (cannot be scoped to one host) | SEC-01, DOC-04 | P0 | done (ADR-0002; flag verified in the generated manifest, and live HTTP to the Pi works on Android) |
-| B-146 | Write `docs/architecture.md`, `docs/api-contract.md`, `docs/ui-style-guide.md` and `docs/tabs/*.md` | DOC-02, DOC-03, DOC-05, DOC-06 | P1 | doing (`docs/api-contract.md` and two ADRs exist; the rest is todo) |
+| B-146 | Write `docs/architecture.md`, `docs/api-contract.md`, `docs/ui-style-guide.md` and `docs/tabs/*.md` | DOC-02, DOC-03, DOC-05, DOC-06 | P1 | done (architecture, API contract, style guide, and all five tab guides are documented) |
 | B-147 | Turn on Windows Developer Mode, then run the build on the emulator | BLD-02..BLD-04, BLD-06 | P0 | done (owner enabled it; symlink test passes; APK built, 128 MB) |
 | B-148 | Document the two desktop dev aids `scripts/screenshot-window.ps1` and `scripts/click-window.ps1` (capture and click the Flet window) in `docs/build-and-deploy.md`, or drop them | DOC-07 | P2 | todo |
 | B-149 | Make the app's Python output visible with `scripts/logs.ps1`. The tag `flet.python` from the Flet docs produced nothing on the emulator, so either the output goes elsewhere or no warning was logged. Check with a deliberate `logging.warning`, and read `console.log` via `StoragePaths` if needed | BLD-07 | P1 | todo |

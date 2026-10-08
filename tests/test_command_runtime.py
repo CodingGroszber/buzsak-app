@@ -8,7 +8,7 @@ import httpx
 
 from buzsak_app.api.client import ServerClient
 from buzsak_app.settings import Settings
-from buzsak_app.ui.app import Runtime
+from buzsak_app.ui.runtime import Runtime
 
 
 class StubPage:
