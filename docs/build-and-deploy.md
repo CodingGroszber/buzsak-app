@@ -109,6 +109,8 @@ Return the System tab URL to `https://192.168.1.95` before reconnecting to the r
 
 All in `pyproject.toml`:
 
+Custom alerts use the local Android Flutter plugin at `native/buzsak_monitor`, referenced relative to `build/flutter/pubspec.yaml`, and Android-only `pyjnius==1.7.0` (ADR-0009). Version 1.8.0 was unavailable in Flet's Android wheel index; 1.7.0 packaged successfully for this build. The bridge contains no server URL, token or HTTP logic. Its `dataSync` service stops on task removal and Android timeout; Android 15+ allows six background hours per 24 hours, reset when the app returns to the foreground. Native compilation and merged service registration were verified on 2026-10-09. Phone behavior must still be verified before relying on this feature.
+
 - `[project].version` is the only version source (BLD-11). `flet build` uses it as the build version.
 - `[project].dependencies` is what ends up in the APK, and `flet build` **ignores `uv.lock`**. Pin runtime dependencies with `==` there (BLD-10).
 - `requires-python = ">=3.11,<3.13"`: `flet build` bundles the highest supported Python the range allows, so the cap keeps the APK on 3.12.

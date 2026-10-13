@@ -20,6 +20,8 @@ from buzsak_app.ui.greenhouse_controls import CommandHandler
 from buzsak_app.ui.overview_tab import OverviewTab
 from buzsak_app.ui.party_tab import PartyTab
 from buzsak_app.ui.system_tab import SystemTab
+from buzsak_app.ui.alert_editor import AlertEditor, SaveRules
+from buzsak_app.ui.settings_tab import SettingsTab
 from buzsak_app.ui.theme import SPACING, TYPE
 from buzsak_app.ui.view_models import (
     Badge,
@@ -46,10 +48,12 @@ class AppView:
         live_mode: bool = False,
         on_pulse: PulseHandler | None = None,
         on_check_pulse: PulseLookup | None = None,
+        on_rules: SaveRules | None = None,
     ) -> None:
         self._page = page
         self._store = store
         self._settings = settings
+        self.visible = True
         self._clock = clock
         self._on_command = on_command
         self._on_check_command = on_check_command
@@ -79,7 +83,12 @@ class AppView:
             visible=False,
         )
         self._overview = OverviewTab(self.select_party)
-        self._system = SystemTab(settings, on_save)
+        self._system = SystemTab()
+        self._settings_tab = SettingsTab(settings, on_save)
+        self._alerts = AlertEditor(
+            on_save=on_rules or self._no_alert_storage, page=page)
+        self._alerts.control.disabled = on_rules is None
+        self._settings_tab._extras.controls = [self._alerts.control]
         self._tabs: ft.Tabs | None = None
         self._tabs_host = ft.Container(expand=True)
 
@@ -138,10 +147,14 @@ class AppView:
     def set_settings(self, settings: Settings) -> None:
         self._settings = settings
 
+    async def _no_alert_storage(self, _rules) -> bool:
+        return False
+
     # Store updates
 
     def on_store_update(self, state: AppState, diff: SnapshotDiff) -> None:
         snapshot = state.snapshot
+        self._alerts.refresh(snapshot)
         if diff.structure_changed:
             self._rebuild_tabs()
         elif snapshot is not None:
@@ -153,7 +166,8 @@ class AppView:
             self._overview.refresh(snapshot)
         self.render_status(state)
         self._system.refresh(state, self._clock.monotonic(), self._settings)
-        self._page.update()
+        if self.visible:
+            self._page.update()
 
     def tick(self) -> None:
         """Once a second: the "updated N s ago" text moves even when no data arrives (UPD-06)."""
@@ -215,6 +229,8 @@ class AppView:
                 entries.append((party.id, strings.party_title(
                     party.id, party.label), tab.control))
         entries.append((_SYSTEM, strings.TAB_SYSTEM, self._system.control))
+        entries.append(("settings", strings.TAB_SETTINGS,
+                       self._settings_tab.control))
 
         self._tab_keys = [key for key, _, _ in entries]
         index = self._tab_keys.index(

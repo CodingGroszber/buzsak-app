@@ -35,6 +35,12 @@ icon_background = "#171B26"
 [tool.flet.app]
 path = "src"
 
+[tool.flet.android]
+dependencies = ["pyjnius==1.7.0"]
+
+[tool.flet.flutter.pubspec.dependencies]
+buzsak_monitor = { path = "../../native/buzsak_monitor" }
+
 # Cleartext is retained for the local HTTP fake API only (SEC-01, ADR-0002/0003).
 [tool.flet.android.manifest_application]
 usesCleartextTraffic = "true"

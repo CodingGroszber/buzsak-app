@@ -6,6 +6,27 @@ APP_TITLE = "Buzsák"
 
 TAB_OVERVIEW = "Overview"
 TAB_SYSTEM = "System"
+TAB_SETTINGS = "Settings"
+ALERTS_TITLE = "Custom alerts"
+ALERT_NAME = "Alert name"
+ALERT_LOCATION = "Location"
+ALERT_TYPE = "Type"
+ALERT_SENSOR = "Sensor"
+ALERT_NUMBER = "Limit"
+ALERT_RELATION = "Relation"
+ALERT_NEW = "New alert"
+ALERT_EDIT = "Edit alert"
+ALERT_DELETE = "Delete alert"
+ALERT_CANCEL = "Cancel"
+ALERT_INVALID = "Choose a location, type, sensor, relation and a numeric limit."
+ALERT_STORAGE_ERROR = "Could not save alert rules."
+ALERT_STORAGE_READ_ERROR = "Saved alerts could not be loaded; editing is blocked to protect them."
+ALERT_MONITOR_PENDING = "Background monitoring is not available in this build."
+ALERT_MONITOR_ACTIVE = "Monitoring active"
+ALERT_MONITOR_DENIED = "Monitoring active; notifications are blocked by Android settings."
+ALERT_MONITOR_TIMEOUT = "Monitoring stopped: Android background time limit. Reopen Buzsak to resume."
+ALERT_MONITOR_STOPPED = "Monitoring stopped"
+ALERT_TRUE = "Condition is true"
 
 # Party tab titles keyed by server party id; unknown parties use their server label (UX-02).
 PARTY_TITLES: dict[str, str] = {
@@ -76,7 +97,7 @@ SYSTEM_SIGN_OUT = "Sign out"
 SYSTEM_SIGNED_OUT = "Signed out; saved token removed."
 SYSTEM_TOKEN = "Access token"
 SYSTEM_TOKEN_NOTE = "Encrypted on this device until sign-out or uninstall. Server expiry or revocation still applies."
-BANNER_UNAUTHORIZED = "The server needs an access token. Enter it in System."
+BANNER_UNAUTHORIZED = "The server needs an access token. Enter it in Settings."
 GREENHOUSE_CONTROL = "Garden Valve Control"
 VALVES = "Valves"
 MODE_MANUAL = "Manual"
@@ -306,6 +327,22 @@ PARAMETER_CAPTIONS: dict[str, str] = {
 def parameter_label(parameter_id: str) -> str:
     """Known label, or a readable fallback so unknown server parameters still render."""
     return PARAMETER_LABELS.get(parameter_id) or parameter_id.replace("_", " ").capitalize()
+
+
+# Groups the alert editor's cascaded picker by physical quantity (UX-20).
+UNIT_CATEGORY_LABELS: dict[str, str] = {
+    "°C": "Temperature",
+    "%": "Humidity",
+    "bar": "Pressure",
+    "L": "Water level",
+    "ratio": "Duty ratio",
+    "s": "Duration",
+}
+
+
+def unit_category_label(unit: str) -> str:
+    """Known physical-quantity label, or the raw unit for anything not yet mapped."""
+    return UNIT_CATEGORY_LABELS.get(unit, unit)
 
 
 def parameter_caption(parameter_id: str) -> str | None:

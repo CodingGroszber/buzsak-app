@@ -1,0 +1,15 @@
+name: buzsak_monitor
+description: Minimal Android foreground service and notification bridge for Buzsak.
+version: 0.1.0
+publish_to: none
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+dependencies:
+  flutter:
+    sdk: flutter
+flutter:
+  plugin:
+    platforms:
+      android:
+        package: hu.buzsak.monitor
+        pluginClass: MonitorPlugin

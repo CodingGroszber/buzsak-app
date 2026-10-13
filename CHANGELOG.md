@@ -5,7 +5,13 @@ All notable user-visible changes. Format: [Keep a Changelog](https://keepachange
 ## [Unreleased]
 
 ### Added
+- Settings tab after System, containing server/token/sign-out; System is now read-only diagnostics (UX-01, UX-04).
+- Phone-local custom-alert editor, validated rule storage, numeric comparisons and tested session evaluator; bounded Android foreground-service/local-notification bridge source and Runtime wiring. Native build and device delivery verification are pending (NTF-01..NTF-14, ADR-0009).
 - Android launcher icon and splash artwork derived from `assets/app_logo.jpg`, with a transparent exterior and navy adaptive-icon background (UX-24).
+
+### Changed
+- Removed the editable polling/timeout fields from Settings; poll interval and request/command timeouts are fixed release constants (NTF-01).
+- Redesigned the custom-alert editor: the list/"New alert" button is shown by default and the creation form only opens on demand; each alert is now exactly one comparison (no AND/OR picker) chosen via a cascaded Location -> Type -> Sensor picker restricted to physical, SI-unit values, with relation and numeric limit completing the alert (NTF-02, NTF-05).
 - Remembered bearer authentication using Android Keystore-backed secure storage after successful server authentication, with explicit Sign out and no token in ordinary preferences (SEC-03, ADR-0006).
 - Compact Garage Right/Left Trigger rows with explicit relay labels, semantic state styling, concise lifecycle feedback and snapshot-only confirmation (CTL-11, UX-23).
 - Dedicated Greenhouse automation and sensor sections: mist target/duty/cycle progress, frozen automation state, rain schedule/last run, Sensor A/B status/measurements/frame age/errors, and firmware/controller IP. Live readouts were checked against the authenticated server state.

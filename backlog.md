@@ -73,6 +73,22 @@ Last reviewed: 2026-10-08 (secure token persistence implementation). See the che
 
 ## Milestones
 
+These release milestones are historical. New work is tracked by Git-session feature items and their acceptance checks, not release gates.
+
+## Current Git Session: Settings and Local Alerts
+
+Owner decisions accepted on 2026-10-09; no implementation or Pi changes yet (ADR-0008).
+
+| # | Item | Reqs | Status |
+|---|---|---|---|
+| B-501 | Add Settings after System and move every user-editable setting there; keep System read-only | UX-01, UX-04, ARC-09 | doing (connection/auth editor moved; polling/timeout fields removed as fixed release constants 2026-10-13; physical visual checks pending) |
+| B-502 | Build phone-local rule editor/persistence with emoji names, numeric operands, flat AND/OR and compatible units | NTF-01, NTF-02, NTF-04..NTF-06 | doing (editor redesigned 2026-10-13 to a single-comparison cascaded Location/Type/Sensor picker restricted to SI-unit values, with progressive-disclosure New Alert form; validated versioned storage implemented/tested; device persistence check pending) |
+| B-503 | Implement pure rule evaluation and session edge/cooldown state with injectable clocks | NTF-07..NTF-10 | done (synthetic tests cover numeric relations, UNKNOWN, rearming, cooldown, concurrent triggers, edits and restart) |
+| B-504 | Verify Android/Flet foreground-service feasibility, permission handling, lifecycle and task-removal semantics | NTF-03, NTF-12..NTF-14, ARC-01 | doing (owner accepted bounded dataSync, ADR-0009; native plugin compiled into APK 2026-10-09 with Pyjnius 1.7.0; merged service/permissions verified, physical-device proof pending) |
+| B-505 | Deliver distinct local notifications and verify browsing, authentication loss, closure and relaunch on a phone | NTF-03, NTF-04, NTF-11..NTF-14 | doing (419 tests pass including fake bridge cases; APK built, physical-device acceptance pending) |
+
+## Historical Milestones
+
 | Milestone | Goal | Exit criteria |
 |---|---|---|
 | **M0 Foundation** | Toolchain, skeleton and decisions in place | `doctor` passes, desktop dev run shows the app, ADR-0001 accepted. **Met**, except that `doctor` now correctly reports Developer Mode as FAIL |
@@ -220,10 +236,10 @@ Verified on the emulator on 2026-10-06: build, install, launch, live data over p
 | B-402 | Switch to `/api/v1/state` when it is available | SRV-03 | P2 | blocked (SRV-03) |
 | B-403 | Add authentication and HTTPS: token entry UI, viewer/operator role handling | SRV-07, SEC-02, SEC-03 | P2 | doing (HTTPS with the pinned CA and a masked token field are done and checked against the live server without a token; a real token, Android and role handling are not) |
 | B-404 | App update check through a version manifest; open the installer | UPD-09 | P2 | blocked (OD-4) |
-| B-405 | Remote access over Tailscale | §2.3 | P2 | blocked (OD-3) |
+| B-405 | **Remote access over private Tailscale.** Keep the existing HTTPS IP/pinned CA; Pi advertises only `192.168.1.95/32`, and the Android Tailscale VPN provides the client route | SEC-07, ENV-06, SRV-15, AT-09, ADR-0007 | P2 | doing (requirements in [tailscale-remote-access-requirements.md](docs/tailscale-remote-access-requirements.md); blocked on Pi-side route setup/approval and physical-phone validation; no server repo changes made) |
 | B-406 | Hungarian localization | UX-20 | P2 | blocked (OD-5) |
 | B-407 | PLC pump control and the garage pulse from the app | §2.3 | P2 | todo (needs approval) |
-| B-408 | Push notifications (device offline, low water) and a home-screen widget | §2.3 | P2 | todo |
+| B-408 | Home-screen widget; custom local alerts moved to current Git-session items B-501..B-505 | §2.3, NTF-01..NTF-12 | P2 | todo (widget only) |
 | B-409 | Responsive tablet/landscape grid | UX-22 | P2 | todo |
 | B-410 | Show per-device health detail on the System tab, and an in-app explanation when a server reports `healthy` but its data is old | DATA-05, UX-04 | P2 | todo |
 

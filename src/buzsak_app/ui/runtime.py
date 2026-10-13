@@ -18,6 +18,7 @@ from buzsak_app.api.client import (
     Unauthorized,
 )
 from buzsak_app.domain.clock import SystemClock
+from buzsak_app.domain.alerts import AlertRule
 from buzsak_app.domain.models import Device, LastPulse, Snapshot
 from buzsak_app.domain.snapshot import SnapshotFormatError, parse_snapshot
 from buzsak_app.settings import DEFAULT_SERVER_URL, Settings
@@ -25,6 +26,11 @@ from buzsak_app.state.poller import Poller
 from buzsak_app.state.settings_repo import SettingsRepository
 from buzsak_app.state.store import Store
 from buzsak_app.state.token_repository import SecureTokenRepository
+from buzsak_app.state.alert_repository import AlertRepository
+from buzsak_app.state.alert_session import AlertSession, NotificationBridge
+from buzsak_app.state.connection import ConnectionStatus, is_overdue
+from buzsak_app.domain.staleness import stale_server_data_age_s
+from buzsak_app.ui.android_notifications import AndroidNotifications
 from buzsak_app.ui import strings
 from buzsak_app.ui.app_view import AppView
 
@@ -59,24 +65,34 @@ class Runtime:
         settings: Settings,
         *,
         token_repo: SecureTokenRepository | None = None,
+        alert_repo: AlertRepository | None = None,
+        alert_rules: tuple[AlertRule, ...] = (),
+        notifications: NotificationBridge | None = None,
         preview_mode: bool = False,
         live_mode: bool = False,
     ) -> None:
         self._page = page
         self._repo = repo
         self._token_repo = token_repo
+        self._alert_repo = alert_repo
         self._preview_mode = preview_mode
         self._live_mode = live_mode
         self._session_only = preview_mode or live_mode
         self.settings = settings
         self.clock = SystemClock()
+        self.alert_session = AlertSession(
+            self.clock, notifications or AndroidNotifications())
+        self.alert_session.set_rules(alert_rules)
         self.store = Store(self.clock)
         self.view = AppView(page, self.store, settings,
                             self.clock, self.save_connection, self.execute_command,
                             self.check_command_status, preview_mode,
                             self.refresh_selected_party, live_mode,
                             on_pulse=self.execute_pulse,
-                            on_check_pulse=self.check_pulse_status)
+                            on_check_pulse=self.check_pulse_status,
+                            on_rules=self.save_rules if alert_repo is not None else None)
+        self.view._alerts.set_rules(alert_rules)
+        self.store.subscribe(self._evaluate_alerts)
         self._client: ServerClient | None = None
         self._poller: Poller | None = None
         self._task: asyncio.Task | None = None
@@ -96,6 +112,7 @@ class Runtime:
             self._poller.poll_now()
 
     async def stop(self) -> None:
+        self.alert_session.stop()
         if self._poller is not None:
             self._poller.stop()
         if self._task is not None:
@@ -157,6 +174,42 @@ class Runtime:
         self.store.reset()
         self.start()
         return None
+
+    async def save_rules(self, rules: tuple[AlertRule, ...]) -> bool:
+        """Persist definitions before applying them; delivery remains gated by NTF-12."""
+        if self._alert_repo is None:
+            return False
+        if not await self._alert_repo.save(rules):
+            return False
+        self.alert_session.set_rules(rules)
+        self._evaluate_alerts(self.store.state, None)
+        return True
+
+    def _evaluate_alerts(self, state, _diff) -> None:
+        authenticated = bool(
+            self.settings.token) and state.connection is not ConnectionStatus.UNAUTHORIZED
+        trusted = (
+            state.connection is ConnectionStatus.ONLINE
+            and not is_overdue(state.received_at, self.clock.monotonic(), self.settings.poll_interval_s)
+            and stale_server_data_age_s(state.snapshot) is None
+        )
+        self.alert_session.process(
+            state.snapshot, authenticated=authenticated, trusted=trusted)
+        self._show_monitor_status()
+
+    def _show_monitor_status(self) -> None:
+        session = self.alert_session
+        status = session.bridge.status()
+        if session.running:
+            message = (strings.ALERT_MONITOR_ACTIVE if session.bridge.permission_granted()
+                       else strings.ALERT_MONITOR_DENIED)
+        elif status == "timeout":
+            message = strings.ALERT_MONITOR_TIMEOUT
+        elif session.blocked:
+            message = strings.ALERT_MONITOR_PENDING
+        else:
+            message = strings.ALERT_MONITOR_STOPPED
+        self.view._alerts.status.value = message
 
     async def execute_command(
         self,
@@ -311,16 +364,27 @@ class Runtime:
             return
         state = event.state
         if state in (ft.AppLifecycleState.HIDE, ft.AppLifecycleState.PAUSE):
-            poller.pause()
+            self.view.visible = False
+            if not self.alert_session.running:
+                poller.pause()
         elif state in (ft.AppLifecycleState.SHOW, ft.AppLifecycleState.RESUME, ft.AppLifecycleState.RESTART):
+            self.view.visible = True
+            self.alert_session.foreground()
             poller.resume()
+        elif state is ft.AppLifecycleState.DETACH:
+            self.alert_session.stop()
+            poller.pause()
 
     async def tick_forever(self) -> None:
         while True:
             try:
-                await self._page.wait_until_visible()
                 await asyncio.sleep(1)
-                self.view.tick()
+                self.alert_session.check_service()
+                self._show_monitor_status()
+                if not self.view.visible and not self.alert_session.running and self._poller is not None:
+                    self._poller.pause()
+                if self.view.visible:
+                    self.view.tick()
             except asyncio.CancelledError:
                 raise
             except Exception:

@@ -23,6 +23,7 @@ uv run pytest -q             # tests
 | [requirements.md](requirements.md) | Specification (the source of authority) |
 | [backlog.md](backlog.md) | Work items by milestone |
 | [docs/architecture.md](docs/architecture.md) | Layers, data flow, runtime ownership and tests |
+| [docs/tailscale-remote-access-requirements.md](docs/tailscale-remote-access-requirements.md) | Approved post-1.0 Pi/Tailscale network requirements |
 | [docs/ui-style-guide.md](docs/ui-style-guide.md) | Design tokens, components, states and layout rules |
 | [docs/build-and-deploy.md](docs/build-and-deploy.md) | Run, build, install, sign, troubleshoot |
 | [docs/tabs/](docs/tabs/) | Per-tab content, controls, gating and edge cases |

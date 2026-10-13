@@ -71,6 +71,8 @@ The app is a *view and command terminal*. It holds no authoritative state of its
 
 ## 2. Scope
 
+New work is planned and verified as Git-session features, not gated by release milestones. Existing release labels are historical planning context. The approved current feature is Settings and phone-local custom alerts (ADR-0008, NTF-01..NTF-12); it is specified below but not yet implemented.
+
 ### 2.1 In scope (release 1.0)
 
 - Android app (phone first; tablet layout SHOULD work).
@@ -91,11 +93,11 @@ The app is a *view and command terminal*. It holds no authoritative state of its
 - Google Play publication. Distribution is by sideloaded APK.
 - RS485 commissioning (`/api/rs485*`) and device OTA (`/update`) functions.
 
-### 2.3 Later (backlog candidates, not yet approved)
+### 2.3 Post-1.0 roadmap
 
 - PLC pump control, once its server-side command path is approved.
-- Remote access over Tailscale.
-- Push notifications, e.g. for a device going offline or low water.
+- **Approved:** remote access over a private Tailscale tailnet (B-405, ADR-0007), with Pi-side requirements in [tailscale-remote-access-requirements.md](docs/tailscale-remote-access-requirements.md); implementation is post-1.0 and depends on Pi route configuration and physical-phone verification.
+- Phone-local custom alerts are approved current Git-session work (NTF-01..NTF-12), not a deferred push-provider feature.
 - Home-screen widget.
 
 ---
@@ -194,6 +196,7 @@ The app depends on server endpoints, some of which do not exist yet. These are *
 | SRV-08 | Push channel (Server-Sent Events or WebSocket) for state changes | Not planned | Polling (see UPD) |
 | SRV-13 | Valve controller data parity: rain automation, per-relay `controllable` / `always_manual`, sensor error details, firmware (proposal CP-02..CP-04) | Implemented in server catalog; **live values verified 2026-10-07** through authenticated state GET | Greenhouse renders dedicated mist/rain schedules, sensor diagnostics and identity; missing fields remain explicit |
 | SRV-14 | Valve command execution and capability enablement (proposal CP-05..CP-08, CP-12), extending SRV-04/05 | Implemented in server code; **relay4 LIGHT capability and confirmed on/off round trip verified live 2026-10-07** | Other relay/mode commands remain untested; Android UI verification pending |
+| SRV-15 | Pi-side Tailscale route advertising only `192.168.1.95/32`; requirements are in [tailscale-remote-access-requirements.md](docs/tailscale-remote-access-requirements.md) | Planned external deployment work; coordinate with the server owner | App stays LAN-only until route setup/approval; then the existing HTTPS URL and pinned CA remain unchanged |
 
 | ID | Requirement |
 |---|---|
@@ -215,7 +218,7 @@ The app depends on server endpoints, some of which do not exist yet. These are *
 | ARC-06 | **One-way data flow:** the polling service fetches a snapshot, the store replaces state immutably, and views re-render from state. Views never mutate snapshot state directly; they dispatch user intents through the UI Runtime, which uses the API client and waits for server-reported status. |
 | ARC-07 | Domain models SHOULD be frozen dataclasses. Use `from __future__ import annotations` (the same convention as the server). |
 | ARC-08 | Networking MUST NOT block the UI thread. Use asyncio (`httpx.AsyncClient` or an equivalent pure-Python client compatible with Flet on Android). |
-| ARC-09 | Configuration (server base URL, poll interval, timeouts, optional token) MUST live in one settings module. It is persisted with Flet client storage (never the token) and editable on the System tab. Defaults: `https://192.168.1.95`, poll every 2 s. |
+| ARC-09 | Configuration (server base URL, poll interval, timeouts, optional token) MUST live in one settings module and be editable on Settings. Ordinary preferences MUST exclude the token; secure credential persistence follows SEC-03. Defaults: `https://192.168.1.95`, poll every 2 s. Migration from System is approved but not yet implemented. |
 | ARC-10 | Avoid speculative abstractions (YAGNI). Add no plugin systems or DI frameworks. |
 
 Proposed layout (to be confirmed at implementation start):
@@ -252,7 +255,7 @@ buzsak_app/
 |---|---|
 | UPD-01 | While the app is in the foreground, it MUST refresh the snapshot automatically. The default interval is **2 s**, configurable from 1 to 30 s. The user never has to refresh manually. |
 | UPD-02 | Pull-to-refresh or a refresh button MAY trigger an immediate fetch. |
-| UPD-03 | Polling MUST pause when the app is backgrounded or the screen is off, and MUST resume immediately when the app returns to the foreground. |
+| UPD-03 | Without an active alert-monitoring session, polling MUST pause in the background and resume on foreground return. During an authenticated monitoring session, the monitoring owner MUST continue serialized API polling while another app is foregrounded (NTF-03). Closing/swiping away Buzsak or signing out stops monitoring. This background exception is approved but not implemented; Android feasibility must pass NTF-12. |
 | UPD-04 | Requests MUST NOT overlap. If a fetch is still running, the next tick is skipped. |
 | UPD-05 | On errors, the app MUST back off exponentially (capped at 30 s) and MUST show a non-blocking connection banner (connecting / offline / server unhealthy). The last data stays visible and is marked stale. |
 | UPD-06 | A global "last updated N s ago" indicator MUST always be visible. It turns into a warning when older than 3× the poll interval. |
@@ -303,10 +306,10 @@ buzsak_app/
 
 | ID | Requirement |
 |---|---|
-| UX-01 | **Tabbed layout.** There is one tab per server party, plus an Overview tab and a System tab: **Overview · Pump · Greenhouse · Garage · System**. Tabs are reachable by tapping the tab bar and by swiping horizontally. |
+| UX-01 | **Tabbed layout.** There is one tab per server party plus Overview, System and Settings: **Overview · Pump · Greenhouse · Garage · System · Settings**. Settings follows System. Tabs support tapping and swiping; party order remains server-driven. Settings is an approved, not-yet-implemented addition. |
 | UX-02 | The party tabs MUST be generated from the server's `parties[]`, in server order. A party not yet known to the app gets a generic tab (SSOT-07). |
 | UX-03 | **Overview** shows one compact status card per party: health, the 2–4 headline KPIs, and active controls or alerts. Tapping a card opens that party's tab. |
-| UX-04 | **System** shows the server URL and settings, server `/readyz` status, the snapshot `generated_at`, the per-device health table, the session command log, the app version and build info, and the optional update check. |
+| UX-04 | **System** is read-only diagnostics: server URL, connection/health facts, `/readyz`, snapshot `generated_at`, session command log and version/build information. All user-editable configuration, token/sign-out, polling/timeouts and custom alert rules belong in **Settings**. This separation is approved; the current implementation still contains the editor in System. |
 | UX-05 | The selected tab and scroll positions MUST survive refreshes and app backgrounding. |
 
 ### 10.2 Visual style (reference: https://holadelej.hu/)
@@ -338,6 +341,29 @@ The reference is a modern data-journalism dashboard. The characteristics to adop
 
 ## 11. Security (SEC)
 
+### Phone-local custom alerts (NTF)
+
+These are local Android notifications, not remote provider push. Requirements are accepted owner decisions; implementation and Android feasibility are pending (ADR-0008).
+
+| ID | Requirement |
+|---|---|
+| NTF-01 | Settings MUST let the user create, edit and delete named alert rules. Names MUST support emojis. Rules are independent and phone-local, with no Pi evaluation, server synchronization or push-provider dependency. |
+| NTF-02 | A comparison selects a numeric telemetry value or finite numeric constant on each side of `<`, `<=`, `>`, `>=`, `==` or `!=`. Boolean values, text, addresses and nonnumeric identity/configuration fields MUST NOT be selectable. Parameter references use device and parameter ids from the server catalog, not list positions. The editor UI picks the telemetry side only through a cascaded Location -> Type -> Sensor picker grouped by physical unit, with the constant always on the other side; the underlying evaluator still accepts telemetry on either side. |
+| NTF-03 | Monitoring MUST start automatically after successful authentication, including on reopening with a remembered valid token. It MUST continue when another app is foregrounded. Explicit closure/swiping away, sign-out or authentication rejection stops monitoring; it MUST NOT restart merely because a closed app has saved credentials. Reopening/authentication begins a fresh session. |
+| NTF-04 | Saved rule definitions MUST survive app closure/reopening on this phone only. Sign-out MUST work offline and preserve definitions. Per-rule truth/rearm state and cooldown timestamps are session-only and reset with a new monitoring session. |
+| NTF-05 | Initially a rule is a flat list of comparisons using one AND or OR connective for the entire rule. Nested/mixed groups remain a future extension, not initial implementation scope. No arbitrary expression/code execution is permitted. The shipped editor UI exposes exactly one comparison per rule (no AND/OR picker); multiple independent alerts in parallel cover combined conditions. The evaluator keeps the general multi-comparison/connective shape for forward compatibility. |
+| NTF-06 | Comparisons require identical explicit unit identifiers; there are no automatic conversions. Unitless/missing-unit telemetry is excluded. Constants use the telemetry operand's unit; constant-only comparisons are rejected. At least one operand MUST reference telemetry. |
+| NTF-07 | Only trusted fresh numeric telemetry may produce TRUE/FALSE. Stale, missing, invalid, unavailable or unreachable input produces UNKNOWN. If ANY comparison is UNKNOWN, the WHOLE rule is UNKNOWN, regardless of AND/OR. UNKNOWN neither triggers nor rearms and preserves the last valid truth state. No cached network-failure value may be treated as current. |
+| NTF-08 | The first valid TRUE evaluation of a new monitoring session MUST notify immediately. Afterwards notification requires a valid FALSE followed by TRUE; continuous TRUE does not repeat. Missing data followed by recovery does not count as FALSE. |
+| NTF-09 | Each rule has a minimum 10-second interval between notifications, measured with an injectable monotonic clock within the session. A qualifying TRUE edge during cooldown is discarded, not delayed: a subsequent valid FALSE then TRUE is required. Cooldown is per rule, not global. |
+| NTF-10 | A new rule or condition edit is evaluated like startup and may notify immediately if TRUE, subject to that rule's existing session cooldown. Condition edits reset truth/rearm state but retain cooldown; renaming resets neither. |
+| NTF-11 | Each firing rule MUST produce a separate standard Android notification containing its name, including emojis; simultaneous firing rules MUST NOT overwrite each other. Sound/vibration remain subject to Android permission, channel settings and Do Not Disturb. An ongoing monitoring-service notification is distinct from rule alerts. |
+| NTF-12 | Reliable monitoring while another app is foregrounded requires an Android foreground-service feasibility gate against pinned Flet 1.0.3 and current Android restrictions. Verify service type, execution/time limits, permissions, service lifetime and task-removal behavior before implementation. Native integration requires its own ADR under ARC-01; ADR-0008 does not approve a particular native implementation. No unconditional guarantee applies after force-stop, OS termination or connectivity loss; limitations and denied-permission behavior must be documented and tested. |
+| NTF-13 | If notification permission is denied, rule evaluation continues and qualifying triggers are consumed without a notification queue or catch-up. Granting permission does not reset truth/rearm/cooldown state. Implementing the required background service remains subject to NTF-12 even when alert permission is denied. |
+| NTF-14 | Owner-approved bounded monitoring uses an Android `dataSync` foreground service (ADR-0009). On Android 15+ the background budget is six hours per 24 hours, reset by foreground return. The app MUST stop promptly on service timeout, show stopped/timeout state, and require foreground return before resuming; it MUST NOT silently evade limits by changing service type. Native compilation and physical-device acceptance remain required gates. |
+
+### Security Requirements
+
 | ID | Requirement |
 |---|---|
 | SEC-01 | 1.0 targets the trusted home LAN. The server now serves HTTPS ([ADR-0003](docs/adr/0003-https-pinned-ca-memory-token.md)). The Android cleartext permission ([ADR-0002](docs/adr/0002-cleartext-http.md)) remains only for the fake server and MUST be removed once the fake server speaks TLS. |
@@ -346,6 +372,7 @@ The reference is a modern data-journalism dashboard. The characteristics to adop
 | SEC-04 | The repository MUST NOT contain secrets, signing keystores or passwords. Release signing material lives outside the repo, and its path is passed through environment variables. |
 | SEC-05 | The app MUST NOT log raw server payloads at INFO level or above. |
 | SEC-06 | Validate every server response before use. Treat the server as trusted for content but not for well-formedness (SRV-11). |
+| SEC-07 | Post-1.0 remote access MUST remain private to the configured Tailscale tailnet. Public Funnel endpoints and public port forwarding are out of scope. The Pi advertises only `192.168.1.95/32`; all tailnet members may reach that route, but every API request still requires the existing pinned-CA HTTPS endpoint and a server bearer token with the required role. The Android Tailscale VPN is managed by the OS/client app; Buzsák MUST NOT embed a Tailscale SDK or manage the VPN. |
 
 ---
 
@@ -360,6 +387,7 @@ Target environments:
 | ENV-03 | **Flutter SDK** as required by the pinned Flet version. Flet MAY install it automatically; the version is documented. |
 | ENV-04 | Physical Android test device(s). The minimum Android version follows the Flet/Flutter default (documented in `docs/build-and-deploy.md`). |
 | ENV-05 | The server is reachable on the LAN at `https://192.168.1.95` (Caddy in front of gunicorn; plain `:8080` is closed). Its preview and production deployments MUST both be selectable by URL. |
+| ENV-06 | For approved post-1.0 remote access, the Pi MUST join the private Tailscale tailnet and advertise only `192.168.1.95/32`; the route must be approved in the tailnet admin policy. The phone uses the official Tailscale Android VPN. The app keeps `https://192.168.1.95` and its current pinned CA; no public route is configured. |
 
 Required run, build and deploy options. Each MUST have a PowerShell script in `scripts/` and a VS Code task, and each MUST be documented in `docs/build-and-deploy.md`:
 
@@ -437,6 +465,7 @@ Required run, build and deploy options. Each MUST have a PowerShell script in `s
 | AT-06 | Against the current server, where the valve capabilities are disabled, the controls show the server's `disabled_reason` and everything else works. |
 | AT-07 | Every BLD option works from a clean clone on Windows 11 by following `docs/build-and-deploy.md`. |
 | AT-08 | `uv run pytest -q` passes. The docs listed in §14 exist and are current. |
+| AT-09 | **Post-1.0 Tailscale access:** from an authorized phone off the home LAN with Tailscale connected, authenticated telemetry loads from the unchanged HTTPS IP and pinned CA. With Tailscale disconnected, the existing offline banner/recovery behavior applies. No public endpoint is reachable. Control gating is unchanged; no real hardware command is part of this network acceptance test. |
 
 ---
 
@@ -446,7 +475,6 @@ Required run, build and deploy options. Each MUST have a PowerShell script in `s
 |---|---|---|
 | OD-1 | Exact server command API shape (SRV-04/05). It is owned by the server project. | Assume the proposal in §5 |
 | OD-2 | History endpoint and retention on the server (SRV-06) | In-session sparklines only |
-| OD-3 | Remote access (Tailscale) and the authentication rollout timing | LAN only |
 | OD-4 | App self-update distribution channel (UPD-09) | Manual APK install |
 | OD-5 | Hungarian UI localization | English only |
 | OD-6 | Default poll interval: 1 s (matches the web dashboard) or 2 s (server spec proposal) | 2 s |

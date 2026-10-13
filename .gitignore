@@ -34,3 +34,7 @@ key.properties
 .pytest_cache/
 .ruff_cache/
 .flet/
+
+# Dart/Flutter plugin build tooling (generated; buzsak_monitor is a plugin, not an app)
+native/**/.dart_tool/
+native/**/pubspec.lock

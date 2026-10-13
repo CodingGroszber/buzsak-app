@@ -158,14 +158,15 @@ def test_kpi_card_hides_empty_unit_badge_and_caption() -> None:
 
 def test_app_shows_only_overview_and_system_before_any_data(clock) -> None:
     view, _, _ = _view(clock)
-    assert _tab_titles(view) == [strings.TAB_OVERVIEW, strings.TAB_SYSTEM]
+    assert _tab_titles(view) == [strings.TAB_OVERVIEW,
+                                 strings.TAB_SYSTEM, strings.TAB_SETTINGS]
 
 
 def test_tabs_follow_the_servers_parties_in_order(clock) -> None:
     view, store, page = _view(clock)
     store.apply_snapshot(_snapshot())
     assert _tab_titles(view) == ["Overview", "Pump",
-                                 "Greenhouse", "Garage", "System"]
+                                 "Greenhouse", "Garage", "System", "Settings"]
     assert page.updates == 1
 
 
@@ -268,7 +269,8 @@ def test_selected_tab_falls_back_to_overview_after_a_reset(clock) -> None:
     view._selected_key = "matter"
     store.reset()
     assert view._selected_key == "overview"
-    assert _tab_titles(view) == [strings.TAB_OVERVIEW, strings.TAB_SYSTEM]
+    assert _tab_titles(view) == [strings.TAB_OVERVIEW,
+                                 strings.TAB_SYSTEM, strings.TAB_SETTINGS]
 
 
 def test_offline_shows_a_banner_and_keeps_the_data_on_screen(clock) -> None:
@@ -307,12 +309,12 @@ def test_the_token_field_is_masked_and_saved_with_the_address(clock) -> None:
 
     store = Store(clock)
     view = AppView(StubPage(), store, Settings(token="s3cret"), clock, save)
-    field = view._system._token
+    field = view._settings_tab._token
     assert field.password and field.can_reveal_password
     assert field.value == "s3cret"
 
     field.value = "new-token"
-    asyncio.run(view._system._save(None))
+    asyncio.run(view._settings_tab._save(None))
     assert saved == [(Settings().server_url, "new-token")]
 
 
@@ -325,11 +327,17 @@ def test_sign_out_clears_the_token_field_and_reports_removal(clock) -> None:
 
     view = AppView(
         StubPage(), Store(clock), Settings(token="saved-token"), clock, save)
-    asyncio.run(view._system._sign_out(None))
+    asyncio.run(view._settings_tab._sign_out(None))
 
     assert saved == [(Settings().server_url, "")]
-    assert view._system._token.value == ""
-    assert view._system._message.value == strings.SYSTEM_SIGNED_OUT
+    assert view._settings_tab._token.value == ""
+    assert view._settings_tab._message.value == strings.SYSTEM_SIGNED_OUT
+
+
+def test_system_is_read_only(clock):
+    view = AppView(StubPage(), Store(clock), Settings(), clock, _no_save)
+    assert not hasattr(view._system, "_token")
+    assert not hasattr(view._system, "_url")
 
 
 def test_freshness_moves_with_the_clock_and_warns_when_overdue(clock) -> None:

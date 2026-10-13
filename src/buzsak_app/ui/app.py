@@ -14,6 +14,7 @@ import flet_secure_storage as fss
 from buzsak_app.settings import DEFAULT_SERVER_URL, Settings
 from buzsak_app.state.settings_repo import SettingsRepository
 from buzsak_app.state.token_repository import SecureTokenRepository
+from buzsak_app.state.alert_repository import AlertRepository
 from buzsak_app.ui import strings, theme
 from buzsak_app.ui.components import centered_message
 from buzsak_app.ui.runtime import Runtime
@@ -106,6 +107,9 @@ async def main(page: ft.Page) -> None:
     page.add(host)
 
     repo = SettingsRepository(prefs)
+    alert_repo = AlertRepository(prefs)
+    alert_rules = ()
+    alerts_loaded = False
     token_repo = SecureTokenRepository(secure_storage)
     settings = Settings()
     prefs_ready, secure_storage_ready = await asyncio.gather(
@@ -114,6 +118,12 @@ async def main(page: ft.Page) -> None:
     )
     if prefs_ready:
         settings = await repo.load()
+        try:
+            alert_rules = await alert_repo.load()
+            alerts_loaded = True
+        except Exception as error:
+            logger.warning(
+                "could not load alert definitions (%s)", type(error).__name__)
     else:
         logger.warning("settings storage unavailable; using defaults")
     if secure_storage_ready and not (preview_mode or live_mode):
@@ -135,8 +145,12 @@ async def main(page: ft.Page) -> None:
     )
     runtime = Runtime(
         page, repo, settings, token_repo=token_repo,
+        alert_repo=alert_repo if alerts_loaded else None,
+        alert_rules=alert_rules,
         preview_mode=preview_mode, live_mode=live_mode,
     )
+    if not alerts_loaded:
+        runtime.view._alerts.message.value = strings.ALERT_STORAGE_READ_ERROR
     page.on_app_lifecycle_state_change = runtime.on_lifecycle
     host.content = runtime.view.control
     page.update()
