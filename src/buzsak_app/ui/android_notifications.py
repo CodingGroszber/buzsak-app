@@ -25,7 +25,8 @@ class AndroidNotifications:
             plugin = import_module("jnius").autoclass(
                 "hu.buzsak.monitor.MonitorPlugin")
             plugin.configure(strings.APP_TITLE, strings.ALERT_MONITOR_ACTIVE,
-                             strings.ALERTS_TITLE, strings.ALERT_TRUE)
+                             strings.ALERTS_TITLE, strings.ALERT_TRUE,
+                             strings.ALERT_ACKNOWLEDGE)
             self._plugin = plugin
         return self._plugin
 

@@ -38,3 +38,6 @@ key.properties
 # Dart/Flutter plugin build tooling (generated; buzsak_monitor is a plugin, not an app)
 native/**/.dart_tool/
 native/**/pubspec.lock
+
+# Local flattened project reference (DOC-11, SEC-04)
+/repomix-output*

@@ -2,6 +2,17 @@
     "version": "2.0.0",
     "tasks": [
         {
+            "label": "buzsak: repomix reference",
+            "type": "shell",
+            "command": "pwsh",
+            "args": [
+                "-NoProfile",
+                "-File",
+                "${workspaceFolder}/scripts/repomix.ps1"
+            ],
+            "problemMatcher": []
+        },
+        {
             "label": "buzsak: doctor",
             "type": "shell",
             "command": "pwsh",

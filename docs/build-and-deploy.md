@@ -109,7 +109,15 @@ Return the System tab URL to `https://192.168.1.95` before reconnecting to the r
 
 All in `pyproject.toml`:
 
-Custom alerts use the local Android Flutter plugin at `native/buzsak_monitor`, referenced relative to `build/flutter/pubspec.yaml`, and Android-only `pyjnius==1.7.0` (ADR-0009). Version 1.8.0 was unavailable in Flet's Android wheel index; 1.7.0 packaged successfully for this build. The bridge contains no server URL, token or HTTP logic. Its `dataSync` service stops on task removal and Android timeout; Android 15+ allows six background hours per 24 hours, reset when the app returns to the foreground. Native compilation and merged service registration were verified on 2026-10-09. Phone behavior must still be verified before relying on this feature.
+Custom alerts use the local Android Flutter plugin at `native/buzsak_monitor`, referenced relative to `build/flutter/pubspec.yaml`, and Android-only `pyjnius==1.7.0` (ADR-0009/0010). Version 1.8.0 was unavailable in Flet's Android wheel index; 1.7.0 packaged successfully for this build. The bridge contains no server URL, token or HTTP logic. Its `dataSync` service keeps active monitoring across UI closure/task removal, but stops on Android timeout and sign-out. Android 15+ allows six background hours per 24 hours, reset when the app returns to the foreground. Pending alerts are stored privately on the phone until their individual Acknowledge action; boot restores pending notifications, never monitoring. Android notification settings/OS dismissal and Force Stop remain authoritative. Native compilation/unit tests pass; full updated APK rebuild and phone acceptance remain pending as of 2026-10-21 (Developer Mode is off).
+
+### Local Project Reference (DOC-11)
+
+With Node.js/npm installed, run `pwsh -NoProfile -File scripts/repomix.ps1`, or the VS Code task **buzsak: repomix reference**. It runs pinned Repomix 1.18.1 and writes `repomix-output.xml` in the repository root, preserving file boundaries and full source/docs/tests/native contents. The generated reference is local and git-ignored. Regenerate after changes; it is not the specification or a substitute for reading current source.
+
+The configuration respects git-ignore rules, excludes credentials/secrets/builds/caches/logs/databases and the output itself, and enables Repomix's Secretlint check. The scan is a safeguard, not a guarantee: review the artifact before sharing it outside the project. No source is uploaded by this local packing command; npm may download the pinned tool.
+
+Native regression tests can use an existing generated Flutter project: set `$env:SERIOUS_PYTHON_SITE_PACKAGES = (Resolve-Path build/site-packages).Path`, then run `build/flutter/android/gradlew.bat -p build/flutter/android :buzsak_monitor:testReleaseUnitTest --console=plain`. A clean clone needs the usual Flet build setup first. These tests compile the native plugin and exercise Android notification/storage behavior with Robolectric; they do not replace device acceptance.
 
 - `[project].version` is the only version source (BLD-11). `flet build` uses it as the build version.
 - `[project].dependencies` is what ends up in the APK, and `flet build` **ignores `uv.lock`**. Pin runtime dependencies with `==` there (BLD-10).

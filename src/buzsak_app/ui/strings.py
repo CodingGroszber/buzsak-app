@@ -27,6 +27,7 @@ ALERT_MONITOR_DENIED = "Monitoring active; notifications are blocked by Android 
 ALERT_MONITOR_TIMEOUT = "Monitoring stopped: Android background time limit. Reopen Buzsak to resume."
 ALERT_MONITOR_STOPPED = "Monitoring stopped"
 ALERT_TRUE = "Condition is true"
+ALERT_ACKNOWLEDGE = "Acknowledge"
 
 # Party tab titles keyed by server party id; unknown parties use their server label (UX-02).
 PARTY_TITLES: dict[str, str] = {

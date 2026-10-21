@@ -22,6 +22,18 @@ flowchart TD
 
 `api/` is the only package that performs HTTP (`SRV-10`). It returns validated JSON objects and typed transport errors; `domain/` parses snapshots into frozen dataclasses and represents value quality explicitly. `state/` owns the immutable application snapshot, diffs, serialized polling, ordinary settings persistence and the secure-token repository protocol. `ui/runtime.py` is the UI-layer orchestrator for commands because its workflows are initiated and rendered by controls; it never mutates reported physical state optimistically.
 
+## Android Integration Boundary
+
+Verified structure (ARC-01, ARC-04, SRV-10; ADR-0009/0010): native Android implementation is confined to the independent Flutter plugin in `native/buzsak_monitor/`. Its Gradle configuration, manifest, Java sources and native tests stay together. It is a build dependency, not a second application or a business-logic layer.
+
+The Python boundary is [NotificationBridge](../src/buzsak_app/state/alert_session.py), a platform-neutral protocol used by `AlertSession` and injected into `Runtime`. Its entire contract is `start() -> bool`, `stop() -> None`, `active() -> bool`, `status() -> str`, `permission_granted() -> bool`, and `notify(name: str) -> bool`. Callers do not receive Java objects, Android contexts, intents, notification IDs or storage handles. Tests substitute a fake bridge without loading Java or Pyjnius.
+
+[AndroidNotifications](../src/buzsak_app/ui/android_notifications.py) is the sole Python adapter permitted to load Pyjnius or reference native class names. It loads the plugin lazily, translates Python calls to the Java facade and obtains user-visible labels from the central strings module. The adapter stays in the outer UI layer, preserving the existing downward-import rules; `domain/` and `state/` remain independent of Android and Flet.
+
+Within the native plugin, `MonitorPlugin` is the callable facade, `MonitorService` owns the bounded Android foreground-service lifecycle, `PendingAlerts` owns durable occurrence storage/notification construction, and `AlertReceiver` handles OS reboot and explicit acknowledgment broadcasts. The native side receives labels and fired alert names, never server URLs, bearer tokens, telemetry snapshots, rule expressions or Python evaluator state. HTTP, authentication, telemetry validation, condition evaluation, rearming and cooldowns remain Python responsibilities.
+
+`tests/test_architecture.py` checks for Pyjnius imports/native class references outside the adapter, Java/Kotlin sources outside the plugin in the application source trees, and common networking-library imports in native production Java. These are dependency guardrails, not a sandbox or proof that arbitrary future code cannot perform networking. Device/background acceptance remains separate from structural isolation.
+
 ## Data and command flows
 
 ```mermaid

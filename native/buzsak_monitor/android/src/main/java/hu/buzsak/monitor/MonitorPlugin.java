@@ -20,21 +20,25 @@ public class MonitorPlugin implements FlutterPlugin, ActivityAware {
     private static String monitoringText = "Monitoring active";
     private static String alertsChannel = "Custom alerts";
     private static String alertText = "Condition is true";
+    private static String acknowledgeText = "Acknowledge";
 
     public void onAttachedToEngine(FlutterPluginBinding binding) {
         context = binding.getApplicationContext();
+        PendingAlerts.restore(context);
     }
-    public void onDetachedFromEngine(FlutterPluginBinding binding) { stop(); context = null; }
+    public void onDetachedFromEngine(FlutterPluginBinding binding) { activity = null; }
     public void onAttachedToActivity(ActivityPluginBinding binding) { activity = binding.getActivity(); }
     public void onDetachedFromActivityForConfigChanges() { activity = null; }
     public void onReattachedToActivityForConfigChanges(ActivityPluginBinding binding) { activity = binding.getActivity(); }
     public void onDetachedFromActivity() { activity = null; }
 
-    public static void configure(String name, String monitoring, String channel, String message) {
+    public static void configure(String name, String monitoring, String channel, String message,
+                                 String acknowledge) {
         appName = name;
         monitoringText = monitoring;
         alertsChannel = channel;
         alertText = message;
+        acknowledgeText = acknowledge;
     }
 
     private static NotificationManager manager() {
@@ -111,9 +115,6 @@ public class MonitorPlugin implements FlutterPlugin, ActivityAware {
     }
     public static boolean notifyAlert(int identifier, String title) {
         if (!permissionGranted()) return false;
-        try {
-            manager().notify(identifier, notification("buzsak_alerts", title, alertText, false));
-            return true;
-        } catch (RuntimeException error) { return false; }
+        return PendingAlerts.post(context, title, alertText, alertsChannel, acknowledgeText);
     }
 }

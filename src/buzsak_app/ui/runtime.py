@@ -84,20 +84,40 @@ class Runtime:
             self.clock, notifications or AndroidNotifications())
         self.alert_session.set_rules(alert_rules)
         self.store = Store(self.clock)
-        self.view = AppView(page, self.store, settings,
-                            self.clock, self.save_connection, self.execute_command,
-                            self.check_command_status, preview_mode,
-                            self.refresh_selected_party, live_mode,
-                            on_pulse=self.execute_pulse,
-                            on_check_pulse=self.check_pulse_status,
-                            on_rules=self.save_rules if alert_repo is not None else None)
-        self.view._alerts.set_rules(alert_rules)
+        self._create_view()
         self.store.subscribe(self._evaluate_alerts)
         self._client: ServerClient | None = None
         self._poller: Poller | None = None
         self._task: asyncio.Task | None = None
         # Kept so the task is not garbage-collected while running.
         self.ticker: asyncio.Task | None = None
+
+    def _create_view(self) -> None:
+        self.view = AppView(self._page, self.store, self.settings,
+                            self.clock, self.save_connection, self.execute_command,
+                            self.check_command_status, self._preview_mode,
+                            self.refresh_selected_party, self._live_mode,
+                            on_pulse=self.execute_pulse,
+                            on_check_pulse=self.check_pulse_status,
+                            on_rules=self.save_rules if self._alert_repo is not None else None)
+        self.view._alerts.set_rules(self.alert_session.rules)
+        self.view._alerts.refresh(self.store.state.snapshot)
+        self.view._overview.refresh(self.store.state.snapshot)
+
+    def reattach(
+        self, page: ft.Page, repo: SettingsRepository,
+        token_repo: SecureTokenRepository, alert_repo: AlertRepository | None,
+    ) -> None:
+        """Bind a new Android page without duplicating polling or rearming (NTF-03/08)."""
+        self.view.dispose()
+        self._page = page
+        self._repo = repo
+        self._token_repo = token_repo
+        self._alert_repo = alert_repo
+        self._create_view()
+        self.alert_session.foreground()
+        if self._poller is not None:
+            self._poller.resume()
 
     def start(self) -> None:
         self._client = ServerClient(
@@ -358,7 +378,7 @@ class Runtime:
         return device.last_pulse if device is not None else None
 
     def on_lifecycle(self, event: ft.AppLifecycleStateChangeEvent) -> None:
-        """Pause polling in the background and resume at once on return (UPD-03)."""
+        """Keep active monitoring across UI detachment (UPD-03, NTF-03)."""
         poller = self._poller
         if poller is None:
             return
@@ -372,8 +392,9 @@ class Runtime:
             self.alert_session.foreground()
             poller.resume()
         elif state is ft.AppLifecycleState.DETACH:
-            self.alert_session.stop()
-            poller.pause()
+            self.view.visible = False
+            if not self.alert_session.running:
+                poller.pause()
 
     async def tick_forever(self) -> None:
         while True:

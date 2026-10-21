@@ -14,6 +14,7 @@ pwsh scripts/doctor.ps1      # check Flutter, JDK, Android SDK, adb
 pwsh scripts/dev.ps1         # desktop window with hot reload
 pwsh scripts/deploy.ps1      # build, install and launch on an emulator or phone (needs Developer Mode)
 uv run pytest -q             # tests
+pwsh scripts/repomix.ps1     # local flattened reference (requires Node.js/npm; DOC-11)
 ```
 
 ## Documentation

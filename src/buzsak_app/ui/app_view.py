@@ -142,7 +142,12 @@ class AppView:
         self._rebuild_tabs()
         self.render_status(store.state)
         self._system.refresh(store.state, clock.monotonic(), settings)
-        store.subscribe(self.on_store_update)
+        self._unsubscribe = store.subscribe(self.on_store_update)
+
+    def dispose(self) -> None:
+        """Detach a replaced UI without stopping monitoring (NTF-03)."""
+        self.visible = False
+        self._unsubscribe()
 
     def set_settings(self, settings: Settings) -> None:
         self._settings = settings

@@ -16,6 +16,7 @@ public class MonitorService extends Service {
     public IBinder onBind(Intent intent) { return null; }
 
     public int onStartCommand(Intent intent, int flags, int startId) {
+        if (running) return START_NOT_STICKY;
         if (!requested) { stopSelf(); return START_NOT_STICKY; }
         try {
             MonitorPlugin.createChannels();
@@ -45,13 +46,6 @@ public class MonitorService extends Service {
         requested = false;
         running = false;
         stopForeground(STOP_FOREGROUND_REMOVE);
-        stopSelf();
-    }
-
-    public void onTaskRemoved(Intent rootIntent) {
-        reason = "closed";
-        requested = false;
-        running = false;
         stopSelf();
     }
 

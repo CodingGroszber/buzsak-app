@@ -22,6 +22,7 @@ from buzsak_app.ui.runtime import Runtime
 logger = logging.getLogger(__name__)
 
 _FAKE_PREVIEW_TOKEN = "fake-operator"
+_android_runtime: Runtime | None = None
 
 
 def _preview_settings(
@@ -78,6 +79,7 @@ async def wait_until_attached(control, timeout_s: float = 5.0) -> bool:
 
 
 async def main(page: ft.Page) -> None:
+    global _android_runtime
     page.title = strings.APP_TITLE
     page.padding = 0
     page.theme = theme.app_theme(dark=False)
@@ -143,16 +145,24 @@ async def main(page: ft.Page) -> None:
         is_windows=sys.platform == "win32",
         token=os.environ.get("BUZSAK_LIVE_SERVER_TOKEN"),
     )
-    runtime = Runtime(
-        page, repo, settings, token_repo=token_repo,
-        alert_repo=alert_repo if alerts_loaded else None,
-        alert_rules=alert_rules,
-        preview_mode=preview_mode, live_mode=live_mode,
-    )
+    is_android = bool(os.environ.get("MAIN_ACTIVITY_HOST_CLASS_NAME"))
+    if is_android and _android_runtime is not None:
+        runtime = _android_runtime
+        runtime.reattach(page, repo, token_repo,
+                         alert_repo if alerts_loaded else None)
+    else:
+        runtime = Runtime(
+            page, repo, settings, token_repo=token_repo,
+            alert_repo=alert_repo if alerts_loaded else None,
+            alert_rules=alert_rules,
+            preview_mode=preview_mode, live_mode=live_mode,
+        )
+        runtime.start()
+        runtime.ticker = asyncio.create_task(runtime.tick_forever())
+        if is_android:
+            _android_runtime = runtime
     if not alerts_loaded:
         runtime.view._alerts.message.value = strings.ALERT_STORAGE_READ_ERROR
     page.on_app_lifecycle_state_change = runtime.on_lifecycle
     host.content = runtime.view.control
     page.update()
-    runtime.start()
-    runtime.ticker = asyncio.create_task(runtime.tick_forever())

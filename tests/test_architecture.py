@@ -66,6 +66,38 @@ def test_only_api_uses_httpx() -> None:
                 ".")[0] != "httpx", f"{path} must go through api/ (SRV-10)"
 
 
+def test_only_android_adapter_accesses_native_bridge() -> None:
+    adapter = PKG / "ui" / "android_notifications.py"
+    for path in PKG.rglob("*.py"):
+        if path == adapter:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for name in _imports(path):
+            assert name.split(
+                ".")[0] != "jnius", f"{path} bypasses the Android adapter"
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                assert not node.value.startswith(("jnius", "hu.buzsak.monitor")), (
+                    f"{path} references native implementation details"
+                )
+
+
+def test_android_implementation_stays_in_native_plugin() -> None:
+    root = SRC.parent
+    plugin = root / "native" / "buzsak_monitor"
+    for directory in (SRC, root / "native"):
+        for pattern in ("*.java", "*.kt"):
+            for path in directory.rglob(pattern):
+                assert path.is_relative_to(
+                    plugin), f"{path} escapes the Android plugin"
+    for path in (plugin / "android" / "src" / "main").rglob("*.java"):
+        for line in path.read_text(encoding="utf-8").splitlines():
+            assert not line.strip().startswith((
+                "import java.net.", "import javax.net.", "import okhttp3.",
+                "import retrofit2.", "import org.apache.http.",
+            )), f"{path} must not own networking (SRV-10)"
+
+
 def test_composition_view_and_runtime_have_separate_modules() -> None:
     app_tree = ast.parse((PKG / "ui" / "app.py").read_text(encoding="utf-8"))
     view_tree = ast.parse(

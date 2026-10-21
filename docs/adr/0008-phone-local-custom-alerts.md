@@ -13,7 +13,7 @@ The owner requested custom numeric conditions and notifications while using anot
 - Persist named rules locally on this phone, supporting emojis. Do not synchronize rules or require a push provider/server evaluator.
 - Use numeric telemetry/constant comparisons with compatible units and operators `<`, `<=`, `>`, `>=`, `==`, `!=`. Start with flat AND or OR rules; nested groups are deferred.
 - Any unknown comparison makes the whole rule UNKNOWN. UNKNOWN neither fires nor rearms.
-- Start automatically after successful authentication. Continue while another app is foregrounded; stop on explicit closure/task removal, sign-out or rejected authentication. Saved rules survive; reopening starts a fresh session.
+- Start automatically after successful authentication. As amended by ADR-0010, active monitoring continues while another app is foregrounded and across UI closure/task removal, within Android limits; sign-out or rejected authentication stops it. Reopening the same process preserves the session; a fresh process starts a fresh session. Saved rules and pending occurrences survive.
 - First valid TRUE triggers. Further alerts require FALSE then TRUE. Enforce per-rule 10-second cooldown; discard edges within cooldown instead of delivering them later.
 - Condition edits reset truth state while preserving session cooldown. Renaming resets neither. Truth/cooldown state is not persisted across sessions.
 - Deliver separate standard Android notifications for concurrent rules, including rule names. Android permissions/channel preferences remain authoritative.
@@ -38,4 +38,4 @@ Sources: [Android service types](https://developer.android.com/develop/backgroun
 - In a simulated telemetry sequence: TRUE stays quiet after its first alert; FALSE then TRUE rearms; UNKNOWN does not rearm; any UNKNOWN dominates both AND and OR.
 - Suppressed cooldown edges do not become delayed notifications. Condition edits retain cooldown, renames retain all state, and sessions reset runtime state.
 - Two rules firing together produce separate notifications with intact emoji names.
-- On a physical phone, browsing another app preserves evaluation and notification delivery; task removal/closure stops it. Verify permission denial, auth rejection, network loss and recovery without touching real hardware.
+- On a physical phone, browsing another app and task removal/closure preserve active monitoring within Android limits (ADR-0010). Verify separate acknowledgment, reboot restoration, permission denial, auth rejection, network loss and recovery without touching real hardware.

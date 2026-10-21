@@ -355,7 +355,8 @@ def test_network_failure_does_not_stop_service_or_rearm(clock):
     assert session.process(snapshot(), authenticated=True, trusted=True) == ()
 
 
-def test_runtime_keeps_monitoring_when_another_app_is_visible_and_detach_stops_it():
+@pytest.mark.parametrize("monitoring", [False, True])
+def test_runtime_keeps_active_monitoring_across_ui_detach(monitoring):
     from types import SimpleNamespace
     import flet as ft
     from buzsak_app.settings import Settings
@@ -369,11 +370,43 @@ def test_runtime_keeps_monitoring_when_another_app_is_visible_and_detach_stops_i
     bridge = FakeNotifications()
     runtime = Runtime(Page(), None, Settings(token="test-token"),
                       alert_rules=(rule(),), notifications=bridge)
-    runtime.alert_session.process(snapshot(), authenticated=True, trusted=True)
+    if monitoring:
+        runtime.alert_session.process(
+            snapshot(), authenticated=True, trusted=True)
     runtime._poller = Poller(lambda: None, runtime.store, interval_s=2)
     runtime.on_lifecycle(SimpleNamespace(state=ft.AppLifecycleState.PAUSE))
-    assert not runtime._poller.paused
+    assert runtime._poller.paused is not monitoring
     assert not runtime.view.visible
     runtime.on_lifecycle(SimpleNamespace(state=ft.AppLifecycleState.DETACH))
-    assert runtime._poller.paused
-    assert not runtime.alert_session.running
+    assert runtime._poller.paused is not monitoring
+    assert runtime.alert_session.running is monitoring
+    assert not runtime.view.visible
+    runtime.on_lifecycle(SimpleNamespace(state=ft.AppLifecycleState.RESUME))
+    assert not runtime._poller.paused
+    assert runtime.view.visible
+
+
+def test_android_reattach_preserves_poller_truth_and_cooldown():
+    from buzsak_app.settings import Settings
+    from buzsak_app.state.poller import Poller
+    from buzsak_app.ui.runtime import Runtime
+
+    class Page:
+        def update(self):
+            pass
+
+    bridge = FakeNotifications()
+    runtime = Runtime(Page(), None, Settings(token="test-token"),
+                      alert_rules=(rule(),), notifications=bridge)
+    runtime.alert_session.process(snapshot(), authenticated=True, trusted=True)
+    poller = Poller(lambda: None, runtime.store, interval_s=2)
+    runtime._poller = poller
+    old_view = runtime.view
+    runtime.reattach(Page(), None, None, None)
+    assert runtime._poller is poller
+    assert not old_view.visible
+    assert runtime.view is not old_view and runtime.view.visible
+    assert runtime.alert_session.running
+    assert runtime.alert_session.process(
+        snapshot(), authenticated=True, trusted=True) == ()
+    assert bridge.messages == [rule().name]

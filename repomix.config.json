@@ -1,0 +1,59 @@
+{
+    "$schema": "https://repomix.com/schemas/latest/schema.json",
+    "output": {
+        "filePath": "repomix-output.xml",
+        "style": "xml",
+        "parsableStyle": true,
+        "fileSummary": true,
+        "directoryStructure": true,
+        "compress": false,
+        "git": {
+            "sortByChanges": false,
+            "includeDiffs": false,
+            "includeLogs": false
+        }
+    },
+    "include": [
+        "src/**",
+        "tests/**",
+        "native/**",
+        "scripts/**",
+        "docs/**",
+        ".github/**",
+        ".vscode/tasks.json",
+        "*.md",
+        "pyproject.toml",
+        "uv.lock",
+        ".gitignore",
+        "repomix.config.json"
+    ],
+    "ignore": {
+        "useGitignore": true,
+        "useDefaultPatterns": true,
+        "customPatterns": [
+            "repomix-output*",
+            "**/.dart_tool/**",
+            "**/.gradle/**",
+            "**/build/**",
+            "**/*.log",
+            "**/*.db",
+            "**/*.sqlite*",
+            "**/secrets*",
+            "**/.env*",
+            "**/*credentials*",
+            "**/*.token",
+            "**/*.secret",
+            "**/*.key",
+            "**/*.pem",
+            "**/*.p12",
+            "**/*.pfx",
+            "**/*.jks",
+            "**/*.keystore",
+            "**/key.properties",
+            "**/local.properties"
+        ]
+    },
+    "security": {
+        "enableSecurityCheck": true
+    }
+}
