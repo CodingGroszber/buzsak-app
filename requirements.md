@@ -79,6 +79,7 @@ New work is planned and verified as Git-session features, not gated by release m
 - Live, automatically refreshing read-only view of **all** server KPIs, device health and capabilities.
 - ValveControl commands: `set_mode` (manual/automatic) and `set_output` for relay1–relay4.
 - One server-controlled pulse for each Garage device (`sonoff-1`, `sonoff-2`).
+- A separately gated PLC v4.1 tank-refill request through the server; direct pump outputs remain read-only (CTL-12).
 - Tabbed UI with one tab per party, plus an Overview tab and a System tab.
 - Python single-stack implementation (see ARC).
 - Build, run and deploy on the developer machine (Windows 11 with Android Studio tooling) and on physical Android devices.
@@ -95,7 +96,7 @@ New work is planned and verified as Git-session features, not gated by release m
 
 ### 2.3 Post-1.0 roadmap
 
-- PLC pump control, once its server-side command path is approved.
+- Direct PLC pump-output control remains deferred. The firmware-owned refill request is approved current work, not direct output control (CTL-12, SRV-16).
 - **Approved:** remote access over a private Tailscale tailnet (B-405, ADR-0007), with Pi-side requirements in [tailscale-remote-access-requirements.md](docs/tailscale-remote-access-requirements.md); implementation is post-1.0 and depends on Pi route configuration and physical-phone verification.
 - Phone-local custom alerts are approved current Git-session work (NTF-01..NTF-12), not a deferred push-provider feature.
 - Home-screen widget.
@@ -142,6 +143,11 @@ New work is planned and verified as Git-session features, not gated by release m
 | `switch_led`, `wifi_led` | boolean | – | LED outputs |
 | `pressure_bar` | continuous | bar | Below about 0.1 bar the value is `invalid`/null |
 | `water_level_liters` | continuous | L | 0–1000. The sensor is known to over-range, so the UI SHOULD carry a reliability note |
+| `switch_mode`, `switch_mode_code` | configuration | – | Selector text and code: -1 invalid, 0 off, 1 automatic, 2 manual; reported only, never app-editable |
+| `refill_button`, `refill_active` | boolean | – | Request pulse and firmware filling state; not proof of water flow |
+| `pressure_signal`, `water_level_signal`, `water_level_low` | boolean | – | Sensor validity/low-level state; missing/invalid is not false |
+| `pressure_mv`, `water_level_mv` | continuous | mV | Raw sensor diagnostics |
+| `*_controllable`, `firmware`, `ip` | configuration/identity | – | PLC v4.1 output flags and device identity; legacy switch contacts may be unavailable |
 
 **GREENHOUSE — `valve_controller` (`valve-controller`)**
 
@@ -175,7 +181,7 @@ All `automation_*` values are frozen while `mode == manual`. The UI MUST then sh
 |---|---|---|---|---|
 | `valve_controller` | `set_output` | `{"name": ["relay1".."relay4"], "state": "bool"}` | Registered, **not implemented** | **Implement** (enabled when the server enables it) |
 | `valve_controller` | `set_mode` | `{"value": ["manual","automatic"]}` | Registered, **not implemented** | **Implement** (enabled when the server enables it) |
-| `garden_plc` | `set_output` | `{"name": ["well_pump","tank_pump"], "state": "bool"}` | Registered, not implemented | Read-only display |
+| `garden_plc` | `refill` | `{}` | Implemented in server code; gated by `control.plc_refill_enabled`, default false | One-shot Fill tank request; no direct output controls |
 | `sonoff_minid` | `pulse` | `{}` | **Implemented** | Trigger buttons for Garage Right (`sonoff-1`) and Garage Left (`sonoff-2`) |
 
 ---
@@ -197,6 +203,7 @@ The app depends on server endpoints, some of which do not exist yet. These are *
 | SRV-13 | Valve controller data parity: rain automation, per-relay `controllable` / `always_manual`, sensor error details, firmware (proposal CP-02..CP-04) | Implemented in server catalog; **live values verified 2026-10-07** through authenticated state GET | Greenhouse renders dedicated mist/rain schedules, sensor diagnostics and identity; missing fields remain explicit |
 | SRV-14 | Valve command execution and capability enablement (proposal CP-05..CP-08, CP-12), extending SRV-04/05 | Implemented in server code; **relay4 LIGHT capability and confirmed on/off round trip verified live 2026-10-07** | Other relay/mode commands remain untested; Android UI verification pending |
 | SRV-15 | Pi-side Tailscale route advertising only `192.168.1.95/32`; requirements are in [tailscale-remote-access-requirements.md](docs/tailscale-remote-access-requirements.md) | Planned external deployment work; coordinate with the server owner | App stays LAN-only until route setup/approval; then the existing HTTPS URL and pinned CA remain unchanged |
+| SRV-16 | PLC v4.1 catalog and non-idempotent `refill` via the versioned command API, with status-only recovery | Verified in server source on 2026-10-21: DEV-11, adapter catalog, dashboard queries, commands service and dispatcher; not actuated live | Render compact Pump telemetry and a fail-closed Fill tank button; never substitute direct pump output writes or resend uncertainty |
 
 | ID | Requirement |
 |---|---|
@@ -269,7 +276,7 @@ buzsak_app/
 
 | ID | Requirement |
 |---|---|
-| CTL-01 | Every command sent through the versioned command API MUST include a client-generated **idempotency key** (UUID4). A manual retry reuses the same key only for the exact same intent. The non-idempotent Garage pulse is governed by CTL-11 and MUST NOT be retried. |
+| CTL-01 | Every command sent through the versioned command API MUST include a client-generated **idempotency key** (UUID4). A manual retry reuses the same key only for the exact same intent. Non-idempotent Garage pulses (CTL-11) and PLC refill requests (CTL-12) MUST NOT be retried after ambiguity. |
 | CTL-02 | A control is interactive only if all of these hold: the server capability is `enabled`; device health is `healthy`; the relevant parameters are fresh (not stale, quality `good`); and no command is already in flight for the same target. Otherwise the control is disabled, and the reason is shown in plain language. |
 | CTL-03 | Each command MUST show its lifecycle state inline in the Greenhouse control panel: *sending → pending → acknowledged → confirmed*, or *failed / expired / uncertain*, with a state-specific emoji, semantic color and safe reason where available. |
 | CTL-04 | The app MUST NOT retry automatically. A lost submit response offers an explicit same-key retry; an accepted command with unknown outcome offers **Check status** (GET only). Re-dispatching a terminal failed/uncertain command requires a server contract that preserves idempotency and is tracked by B-211. |
@@ -280,6 +287,7 @@ buzsak_app/
 | CTL-09 | The app MUST log every command intent and outcome in an in-app session log, viewable on the System tab. The authoritative audit trail lives on the server. |
 | CTL-10 | The UI MUST NOT imply physical effects it cannot verify. For example, a confirmed valve relay means "relay energized", not "water flowing" (server CMD-19). |
 | CTL-11 | Garage pulses are non-idempotent momentary actions. For either Sonoff, the app MUST submit once and MUST NOT automatically or manually resubmit after an ambiguous outcome. HTTP 202 means accepted only; completion is reported only from a later server `last_pulse` snapshot. An explicit status check is GET-only. Each button MUST be enabled only when that device's pulse capability is enabled, health is healthy, and `on_off` is fresh and good. The UI MUST describe relay/pulse state, never infer door position. |
+| CTL-12 | Fill tank MUST submit exactly one `refill` action with `params: {}` and a UUID4 through the server command API. Enable only for an enabled healthy device, enabled refill capability with an empty schema, online/non-overdue/non-stale server data, fresh `switch_mode == automatic` and integer `switch_mode_code == 1`, both refill flags false, fresh valid water-level signal, and a finite numeric level in [0, 1000) L. Show the server's disabled reason. Never write pump outputs, change selector mode, optimistically show filling, or infer physical flow. Disable while submitting. On ambiguity lock the action and offer GET-only command-status lookup when an ID is known; never resend. Confirmation is server-reported post-attempt refill pulse/active telemetry, not tank-full completion. |
 
 ---
 
@@ -336,6 +344,8 @@ The reference is a modern data-journalism dashboard. The characteristics to adop
 | UX-22 | Portrait is the primary orientation. Landscape and tablet SHOULD use a responsive grid. |
 | UX-23 | The Garage tab is a daily-use control surface: show one compact row per Garage device with its friendly name, explicitly labeled relay state and a clear Trigger action. Keep lifecycle feedback concise and inline; do not repeat the same state in monitoring cards or device-detail headers. |
 | UX-24 | The Android launcher icon and default splash MUST use the supplied Buzsák logo, preserving the artwork with a transparent exterior and an adaptive background color. |
+| UX-25 | Pump MUST match Greenhouse's narrow responsive single-column layout, section headings, compact label/value rows, quality badges and in-place updates. Present Fill tank, tank/pressure and selector/refill/pump state; direct output rows remain read-only. Omit Sensors and Diagnostics sections and their known fields from the generic fallback; retain their telemetry for safety gating. Show quality-aware firmware/IP discreetly in the existing muted device header, not a Device section. Retain generic fallback for unknown parameters and a tank-level calibration/flow caveat. This is an intentional presentation exception to all-KPI display for these known Pump technical fields. |
+| UX-26 | Pump and Greenhouse MUST use the same compact header: muted quality-aware firmware/IP alongside device health, with no redundant raw device-name heading or duplicate identity footer. Identity-only changes update in place. Their scrollable device content MUST size to its contents and end after the last visible reading plus normal padding, without a trailing empty grey section. Greenhouse sensors and command gates remain unchanged. |
 
 ---
 

@@ -196,6 +196,9 @@ class AppView:
 
         # A connection problem outranks old server data; both warn that values are not live.
         server_age = stale_server_data_age_s(state.snapshot)
+        for tab in self._party_tabs.values():
+            tab.set_connection_available(
+                state.connection is ConnectionStatus.ONLINE and not overdue and server_age is None)
         if conn.show_banner:
             self._banner_chip.set_badge(Badge(conn.text, conn.icon, conn.tone))
             if state.snapshot is not None:

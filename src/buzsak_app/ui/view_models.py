@@ -148,6 +148,25 @@ def health_view(device: Device) -> HealthView:
     return HealthView(text=text, icon=icon, tone=tone, detail=detail)
 
 
+def device_identity(device: Device) -> str:
+    """Format compact quality-aware firmware/IP for device headers (UX-25/26)."""
+    quality_labels = {
+        ValueState.STALE: strings.STATE_STALE,
+        ValueState.INVALID: strings.STATE_INVALID,
+        ValueState.UNAVAILABLE: strings.STATE_UNAVAILABLE,
+        ValueState.NO_DATA: strings.STATE_NO_DATA,
+    }
+    parts = []
+    for identifier, label in (("firmware", strings.DEVICE_FIRMWARE), ("ip", strings.DEVICE_IP)):
+        parameter = device.parameter(identifier)
+        value = str(
+            parameter.value) if parameter is not None and parameter.value is not None else strings.VALUE_MISSING
+        if parameter is not None and parameter.state in quality_labels:
+            value = f"{value} ({quality_labels[parameter.state]})"
+        parts.append(f"{label}: {value}")
+    return " | ".join(parts)
+
+
 def device_detail(device: Device) -> str | None:
     """One muted line under the device name: health problems, then the last pulse (read-only)."""
     parts = []

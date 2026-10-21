@@ -376,7 +376,7 @@ def _command_error(response: httpx.Response) -> CommandApiError | HttpStatusErro
         "unauthenticated": "access token missing or invalid",
         "forbidden": "this account cannot control the device",
         "https_required": "server requires HTTPS",
-        "control_disabled": "valve control is disabled by the server",
+        "control_disabled": "device control is disabled by the server",
         "device_unavailable": "device is unavailable or its data is stale",
         "device_interlock": "device safety interlock rejected the action",
         "device_rejected": "device rejected the action",

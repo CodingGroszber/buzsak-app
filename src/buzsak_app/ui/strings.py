@@ -29,6 +29,34 @@ ALERT_MONITOR_STOPPED = "Monitoring stopped"
 ALERT_TRUE = "Condition is true"
 ALERT_ACKNOWLEDGE = "Acknowledge"
 
+PUMP_CONTROL = "Pump control"
+PUMP_FILL_TANK = "Fill tank"
+PUMP_REFILL_WARNING = "PLC interlocks apply. Relay state does not prove water flow; tank-level calibration is unverified."
+PUMP_REFILL_UNAVAILABLE = "Tank filling is not enabled by the server."
+PUMP_REFILL_REQUIRES_AUTO = "Fresh automatic selector state is required."
+PUMP_REFILL_NOT_IDLE = "Refill is pending, active, or its current state is unavailable."
+PUMP_REFILL_LEVEL_UNAVAILABLE = "A fresh, valid water-level signal and reading are required."
+PUMP_REFILL_TANK_FULL = "The tank is already at the PLC fill-stop threshold."
+PUMP_REFILL_UNCERTAIN = "Fill outcome is uncertain. Do not resend; check status or inspect the system."
+PUMP_PARAMETER_LABELS = {
+    "switch_mode": "Selector mode", "switch_mode_code": "Selector code",
+    "refill_button": "Refill request", "refill_active": "Filling active",
+    "pressure_bar": "Pressure", "pressure_signal": "Pressure sensor signal",
+    "pressure_mv": "Pressure sensor input", "water_level_liters": "Tank level",
+    "water_level_signal": "Level sensor signal", "water_level_mv": "Level sensor input",
+    "water_level_low": "Low tank level", "well_pump": "Well pump", "tank_pump": "Tank pump",
+    "well_pump_controllable": "Well pump controllable", "tank_pump_controllable": "Tank pump controllable",
+    "switch_led": "Selector indicator", "wifi_led": "Wi-Fi indicator",
+    "switch_led_controllable": "Selector indicator controllable", "wifi_led_controllable": "Wi-Fi indicator controllable",
+    "left_sw": "Left selector contact", "right_sw": "Right selector contact",
+    "firmware": "Firmware", "ip": "IP address",
+}
+PUMP_READOUT_GROUPS = (
+    ("Tank and pressure", ("water_level_liters", "pressure_bar")),
+    ("PLC state", ("switch_mode", "refill_active",
+     "refill_button", "well_pump", "tank_pump")),
+)
+
 # Party tab titles keyed by server party id; unknown parties use their server label (UX-02).
 PARTY_TITLES: dict[str, str] = {
     "garden_plc": "Pump",

@@ -1,10 +1,11 @@
 # Greenhouse Tab
 
-Covers VLV-01..VLV-09, CTL-01..CTL-10, UX-01..UX-02.
+Covers VLV-01..VLV-09, CTL-01..CTL-10, UX-01..UX-02, UX-26.
 
 ## Content
 
-- Device health and identity details, Sensor A/B readings and diagnostics.
+- The same compact header as Pump: muted quality-aware firmware/IP beside health, with no raw device-name heading. Identity-only changes refresh the header in place.
+- Sensor A/B readings and diagnostics remain visible; firmware/IP no longer repeat after the sensors.
 - Current mode and four relay states: Mist, Rain, Drip and Light.
 - Mist/rain automation summaries, schedule and progress; automation is visibly frozen in Manual mode.
 
@@ -19,3 +20,4 @@ Covers VLV-01..VLV-09, CTL-01..CTL-10, UX-01..UX-02.
 - Disabled capabilities show the server's `disabled_reason`.
 - Stale, invalid or unavailable gating data disables the affected control.
 - Unknown capability/action schema does not enable a control.
+- Device content shrink-wraps inside the scroll viewport; empty generic grids are hidden. The page ends after the last visible sensor reading with normal padding, not a wrapping/expanding firmware footer or trailing empty section (UX-26).

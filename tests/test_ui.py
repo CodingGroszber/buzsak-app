@@ -200,31 +200,35 @@ def test_selecting_greenhouse_requests_an_immediate_server_snapshot(clock) -> No
     assert calls == ["valve_controller"]
 
 
-def test_a_party_tab_has_a_card_for_every_parameter(clock) -> None:
+def test_pump_renders_only_primary_state_as_compact_readouts(clock) -> None:
     view, store, _ = _view(clock)
     store.apply_snapshot(_snapshot())
-    pump = _cards(view._party_tabs["garden_plc"])
-    assert set(pump) == {
-        p.id for p in _snapshot().parties[0].devices[0].parameters}
+    pump = view._party_tabs["garden_plc"]._sections["garden-plc"]._pump
+    assert set(pump._readouts) == {
+        "pressure_bar", "water_level_liters", "switch_mode", "refill_active",
+        "refill_button", "well_pump", "tank_pump",
+    }
+    assert not _cards(view._party_tabs["garden_plc"])
 
 
-def test_value_change_updates_the_existing_card_not_a_new_one(clock) -> None:
+def test_value_change_updates_the_existing_pump_readout_not_a_new_one(clock) -> None:
     view, store, _ = _view(clock)
     store.apply_snapshot(_snapshot())
-    before = _cards(view._party_tabs["garden_plc"])["pressure_bar"]
-    assert before._value.value == "2.80"
+    readings = view._party_tabs["garden_plc"]._sections["garden-plc"]._pump._readouts
+    before = readings["pressure_bar"]
+    assert before._value.value == "2.80 bar"
 
     store.apply_snapshot(_with_pressure(value="3.10", revision=1524))
 
-    after = _cards(view._party_tabs["garden_plc"])["pressure_bar"]
+    after = readings["pressure_bar"]
     assert after is before
-    assert after._value.value == "3.10"
+    assert after._value.value == "3.10 bar"
 
 
-def test_unchanged_cards_are_left_alone(clock) -> None:
+def test_unchanged_pump_readouts_are_left_alone(clock) -> None:
     view, store, _ = _view(clock)
     store.apply_snapshot(_snapshot())
-    cards = _cards(view._party_tabs["garden_plc"])
+    cards = view._party_tabs["garden_plc"]._sections["garden-plc"]._pump._readouts
     # would be overwritten by a refresh
     cards["tank_pump"]._value.value = "sentinel"
 
@@ -280,7 +284,8 @@ def test_offline_shows_a_banner_and_keeps_the_data_on_screen(clock) -> None:
     store.apply_failure(ConnectionStatus.OFFLINE, "server unreachable")
     assert view._banner.visible
     assert view._banner_text.value == strings.BANNER_STALE_DATA
-    assert "pressure_bar" in _cards(view._party_tabs["garden_plc"])
+    readings = view._party_tabs["garden_plc"]._sections["garden-plc"]._pump._readouts
+    assert readings["pressure_bar"]._value.value == "2.80 bar"
     store.apply_snapshot(_snapshot())
     assert not view._banner.visible
 

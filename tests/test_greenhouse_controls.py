@@ -177,7 +177,7 @@ def test_rain_panel_placeholder_is_visible_when_server_omits_rain_fields() -> No
     assert panel._readings._rain_missing.value == strings.RAIN_NOT_REPORTED
 
 
-def test_greenhouse_readings_show_automation_schedules_sensors_and_identity() -> None:
+def test_greenhouse_readings_show_automation_schedules_and_sensors_without_identity_footer() -> None:
     readings = GreenhouseReadings(_device_with_readings())
 
     assert readings._mist_target._value.value == "90 %"
@@ -195,9 +195,39 @@ def test_greenhouse_readings_show_automation_schedules_sensors_and_identity() ->
     assert readings._sensors[0]._age.value == "Last good frame 8 s ago"
     assert readings._sensors[1]._age.value == strings.SENSOR_NO_GOOD_FRAME
     assert readings._sensors[1]._error.visible
-    assert readings._firmware._value.value == "v0.9"
-    assert readings._ip._value.value == "192.168.1.109"
+    assert readings.control.tight
+    assert isinstance(readings.control.controls[-1], ft.ResponsiveRow)
+    assert readings.control.controls[-1].controls == [
+        sensor.control for sensor in readings._sensors]
     assert not readings._rain_missing.visible
+
+
+def test_greenhouse_uses_the_same_compact_header_as_pump_and_updates_identity() -> None:
+    from buzsak_app.state.diff import SnapshotDiff
+    from buzsak_app.ui.party_tab import PartyTab
+    from buzsak_app.ui.view_models import device_identity
+
+    source = parse_snapshot(load_state_fixture("normal")).parties[1]
+    original = _device_with_readings()
+    source = replace(source, devices=(original,))
+    tab = PartyTab(source)
+    section = tab._sections[original.id]
+    body = section.control.controls[0].content
+    heading = body.controls[0]
+    assert isinstance(heading, ft.Row)
+    assert heading.controls == [section._detail, section._health.control]
+    assert original.id not in section._detail.value
+    assert section._detail.value == device_identity(original)
+    assert body.tight and not section._grid.visible
+    updated = replace(original, parameters=tuple(
+        replace(parameter, value="v1.0", state=ValueState.STALE)
+        if parameter.id == "firmware" else parameter for parameter in original.parameters
+    ))
+    tab.apply(replace(source, devices=(updated,)), SnapshotDiff(
+        structure_changed=False, changed_devices=frozenset(),
+        changed_parameters=frozenset({(original.id, "firmware")}),
+    ))
+    assert "v1.0" in section._detail.value and strings.STATE_STALE in section._detail.value
 
 
 def test_valve_rows_match_device_page_duty_and_daily_run_hints() -> None:

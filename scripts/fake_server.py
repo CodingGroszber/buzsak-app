@@ -128,6 +128,44 @@ class FakeApi:
             device["health"]["stale"] = True
             for parameter in device["parameters"]:
                 parameter["stale"] = True
+        self._prepare_pump()
+
+    def _prepare_pump(self) -> None:
+        device = self._device_by_id("garden-plc")
+        params = {item["id"]: item for item in device["parameters"]}
+        for identifier, category, value, value_type in (
+            ("firmware", "identity", "v4.1", "string"),
+            ("ip", "identity", "192.0.2.94", "string"),
+            ("switch_mode", "configuration", "automatic", "string"),
+            ("switch_mode_code", "configuration", 1, "int"),
+            ("refill_button", "boolean", False, "bool"),
+            ("refill_active", "boolean", False, "bool"),
+            ("water_level_signal", "boolean", True, "bool"),
+            ("pressure_signal", "boolean", True, "bool"),
+            ("water_level_low", "boolean", False, "bool"),
+            ("water_level_mv", "continuous", 1536, "int"),
+            ("pressure_mv", "continuous", 1083, "int"),
+        ):
+            params[identifier] = _parameter(
+                identifier, category, value, value_type)
+            if identifier.endswith("_mv"):
+                params[identifier]["unit"] = "mV"
+        for output in ("well_pump", "tank_pump", "switch_led", "wifi_led"):
+            params[f"{output}_controllable"] = _parameter(
+                f"{output}_controllable", "configuration", False, "bool")
+        for identifier in ("left_sw", "right_sw"):
+            params[identifier].update(
+                value=None, value_type="null", quality="unavailable", has_data=False)
+        device["parameters"] = list(params.values())
+        device["capabilities"] = [{
+            "action_id": "refill", "params_schema": {}, "enabled": True,
+            "disabled_reason": None, "retry_safe": False,
+            "effect": "refill_until_level_threshold",
+        }]
+        if self.scenario in {"offline", "stale"}:
+            device["health"]["status"] = "offline" if self.scenario == "offline" else "degraded"
+            for parameter in device["parameters"]:
+                parameter["stale"] = True
 
     def _device(self) -> dict[str, Any]:
         return next(
@@ -144,9 +182,14 @@ class FakeApi:
         with self.lock:
             self.state["generated_at"] = _now()
             if self.scenario == "normal":
-                health = self._device()["health"]
-                health["last_success_at"] = self.state["generated_at"]
-                health["stale"] = False
+                for party in self.state["parties"]:
+                    for device in party["devices"]:
+                        health = device["health"]
+                        health["last_success_at"] = self.state["generated_at"]
+                        health["stale"] = False
+                        for parameter in device["parameters"]:
+                            if parameter.get("has_data") and parameter.get("quality") == "good":
+                                parameter["observed_at"] = self.state["generated_at"]
             if self._pulse_pending:
                 if self._pulse_pending_snapshots > 0:
                     self._pulse_pending_snapshots -= 1
@@ -222,7 +265,7 @@ class FakeApi:
             if device["id"] == device_id
         )
 
-    def submit(self, payload: object) -> tuple[int, dict[str, Any]]:
+    def submit(self, payload: object, device_id: str = _DEVICE_ID) -> tuple[int, dict[str, Any]]:
         if not isinstance(payload, dict) or set(payload) - {
             "action_id", "params", "idempotency_key", "client_origin", "expected_revisions"
         } or not {"action_id", "params", "idempotency_key", "client_origin"} <= set(payload):
@@ -233,7 +276,8 @@ class FakeApi:
         if not isinstance(key, str) or not isinstance(params, dict):
             return 400, self._error("invalid_request", "invalid command fields")
         fingerprint = hashlib.sha256(json.dumps(
-            [action_id, params, payload.get("expected_revisions", {})],
+            [device_id, action_id, params, payload.get(
+                "expected_revisions", {})],
             sort_keys=True, separators=(",", ":"),
         ).encode()).hexdigest()
         with self.lock:
@@ -246,7 +290,27 @@ class FakeApi:
                 return 202, self._receipt(command_id, True)
             if self.scenario in {"offline", "stale"}:
                 return 503, self._error("device_unavailable", "simulated unavailable device")
-            if action_id == "set_mode":
+            if device_id == "garden-plc":
+                if action_id != "refill" or params:
+                    return 400, self._error("unsupported_action", "only an empty refill request is supported")
+                source = self._device_by_id(device_id)
+                capability = source["capabilities"][0]
+                if not capability["enabled"]:
+                    return 403, self._error("control_disabled", "refill is disabled")
+                values = {item["id"]: item for item in source["parameters"]}
+                required = ("switch_mode_code", "refill_button",
+                            "refill_active", "water_level_signal", "water_level_liters")
+                if any(values[identifier]["stale"] or values[identifier]["quality"] != "good" for identifier in required):
+                    return 409, self._error("stale_telemetry", "refill requires fresh telemetry")
+                if (
+                    values["switch_mode_code"]["value"] != "1"
+                    or values["refill_button"]["value"] != "false"
+                    or values["refill_active"]["value"] != "false"
+                    or values["water_level_signal"]["value"] != "true"
+                    or not 0 <= float(values["water_level_liters"]["value"]) < 1000
+                ):
+                    return 409, self._error("precondition_failed", "refill requires AUTO, idle state and a valid level below 1000 L")
+            elif action_id == "set_mode":
                 value = params.get("value") if set(
                     params) == {"value"} else None
                 if value not in {"manual", "automatic"}:
@@ -265,7 +329,7 @@ class FakeApi:
 
             command_id = f"c_{uuid.uuid4().hex}"
             command = {
-                "command_id": command_id, "device_id": _DEVICE_ID,
+                "command_id": command_id, "device_id": device_id,
                 "action_id": action_id, "params": copy.deepcopy(params),
                 "status": "pending", "reason": None, "created_at": _now(),
                 "updated_at": _now(), "expires_at": _now(),
@@ -277,10 +341,10 @@ class FakeApi:
                 command.update(status="uncertain",
                                reason="transport_outcome_ambiguous")
             elif self.scenario == "slow":
-                self._apply(action_id, params)
+                self._apply(action_id, params, device_id)
                 command.update(status="acknowledged", status_checks=0)
             else:
-                self._apply(action_id, params)
+                self._apply(action_id, params, device_id)
                 command.update(
                     status="confirmed", updated_at=_now(),
                     confirmation={"observed_at": _now(), "simulated": True},
@@ -289,10 +353,14 @@ class FakeApi:
             self.idempotency[key] = (fingerprint, command_id)
             return 202, self._receipt(command_id, False)
 
-    def _apply(self, action_id: str, params: dict[str, Any]) -> None:
+    def _apply(self, action_id: str, params: dict[str, Any], device_id: str = _DEVICE_ID) -> None:
         now = _now()
-        values = self._parameter_map()
-        if action_id == "set_mode":
+        device = self._device_by_id(device_id)
+        values = {item["id"]: item for item in device["parameters"]}
+        if action_id == "refill":
+            values["refill_active"]["value"] = "true"
+            values["well_pump"]["value"] = "true"
+        elif action_id == "set_mode":
             values["mode"]["value"] = params["value"]
             for relay, parameter_id in _RELAY_PARAMETERS.items():
                 if relay != "relay4":
@@ -303,11 +371,11 @@ class FakeApi:
             if params["name"] == "relay2":
                 values["rain_valve_on"]["value"] = str(params["state"]).lower()
         self.state["generated_at"] = now
-        for parameter in self._device()["parameters"]:
+        for parameter in device["parameters"]:
             parameter["observed_at"] = now
             if parameter["id"] in values:
                 parameter["revision"] += 1
-        self._device()["health"]["last_success_at"] = now
+        device["health"]["last_success_at"] = now
 
     def command(self, command_id: str) -> dict[str, Any] | None:
         with self.lock:
@@ -422,10 +490,10 @@ class Handler(BaseHTTPRequestHandler):
             return
         segments = [unquote(part)
                     for part in urlsplit(self.path).path.split("/")]
-        if len(segments) < 6 or segments[4] != _DEVICE_ID:
+        if len(segments) < 6 or segments[4] not in {_DEVICE_ID, "garden-plc"}:
             self._send(404, FakeApi._error("not_found", "device not found"))
             return
-        status, result = self.api.submit(payload)
+        status, result = self.api.submit(payload, segments[4])
         self._send(status, result)
 
     def do_DELETE(self) -> None:

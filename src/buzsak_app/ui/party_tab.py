@@ -16,8 +16,9 @@ from buzsak_app.ui.components import (
 )
 from buzsak_app.ui.greenhouse_controls import CommandHandler, CommandLookup, GreenhouseControls
 from buzsak_app.ui.garage_controls import GaragePulseControl, PulseHandler, PulseLookup
+from buzsak_app.ui.pump_controls import PumpControls
 from buzsak_app.ui.theme import SPACING
-from buzsak_app.ui.view_models import device_detail, health_view, kpi_view, sorted_parameters
+from buzsak_app.ui.view_models import device_detail, device_identity, health_view, kpi_view, sorted_parameters
 
 # The mode decides whether automation values are frozen, so a mode change refreshes the whole device.
 _MODE = "mode"
@@ -30,6 +31,7 @@ class _DeviceSection:
         *,
         greenhouse: GreenhouseControls | None = None,
         garage: GaragePulseControl | None = None,
+        pump: PumpControls | None = None,
     ) -> None:
         self.device_id = device.id
         self._label = device.label
@@ -41,17 +43,29 @@ class _DeviceSection:
         self._order: list[str] = []
         self._greenhouse = greenhouse
         self._garage = garage
-        contents = [device_header(device.label, self._health, self._detail)]
+        self._pump = pump
+        if pump is not None or greenhouse is not None:
+            self._detail.expand = True
+            heading = ft.Row(
+                [self._detail, self._health.control], spacing=SPACING.sm,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            )
+        else:
+            heading = device_header(device.label, self._health, self._detail)
+        contents = [heading]
         if greenhouse is not None:
             contents.append(greenhouse.control)
         if garage is not None:
             contents.append(garage.control)
+        if pump is not None:
+            contents.append(pump.control)
         contents.append(self._grid)
         body = ft.Column(
             contents,
             spacing=SPACING.md,
+            tight=True,
         )
-        if greenhouse is not None or garage is not None:
+        if greenhouse is not None or garage is not None or pump is not None:
             self.control = ft.ResponsiveRow(
                 [ft.Container(
                     content=body,
@@ -70,12 +84,18 @@ class _DeviceSection:
             self._greenhouse.sync(device)
         if self._garage is not None:
             self._garage.sync(device)
+        if self._pump is not None:
+            self._pump.sync(device, changed=changed)
         parameters = sorted_parameters(device)
         if self._greenhouse is not None:
             handled = self._greenhouse._readings.handled_parameter_ids
             parameters = [
                 parameter for parameter in parameters if parameter.id not in handled]
+        if self._pump is not None:
+            parameters = [parameter for parameter in parameters
+                          if parameter.id not in self._pump.handled_parameter_ids]
         order = [p.id for p in parameters]
+        self._grid.visible = bool(order)
         if order != self._order:
             # New or removed parameters: keep existing cards, create the rest.
             self._cards = {pid: self._cards.get(
@@ -83,10 +103,15 @@ class _DeviceSection:
             self._grid.controls = [self._cards[pid].control for pid in order]
             self._order = order
             changed = None
-        if header:
+        if header or ((self._pump is not None or self._greenhouse is not None) and (
+            changed is None or bool({"firmware", "ip"} & changed)
+        )):
             health = health_view(device)
             self._health.set_health(health)
             detail = device_detail(device)
+            if self._pump is not None or self._greenhouse is not None:
+                detail = " | ".join(part for part in (
+                    detail, device_identity(device)) if part)
             self._detail.value = detail or ""
             self._detail.visible = detail is not None
         refresh_all = changed is None or _MODE in changed
@@ -149,7 +174,13 @@ class PartyTab:
                     )
                     if party.kind == "valve_controller" else None
                 )
-                sections.append(_DeviceSection(device, greenhouse=greenhouse))
+                pump = (
+                    PumpControls(device, page=page, on_command=on_command,
+                                 on_check_command=on_check_command)
+                    if party.kind == "garden_plc" else None
+                )
+                sections.append(_DeviceSection(
+                    device, greenhouse=greenhouse, pump=pump))
             self._sections = {s.device_id: s for s in sections}
             self.control = ft.Column(
                 [s.control for s in sections],
@@ -159,6 +190,12 @@ class PartyTab:
             )
             self.control = ft.Container(
                 content=self.control, padding=ft.Padding.all(SPACING.md), expand=True)
+
+    def set_connection_available(self, available: bool) -> None:
+        """Propagate server freshness to PLC controls without altering readings (CTL-12)."""
+        for section in self._sections.values():
+            if section._pump is not None:
+                section._pump.set_available(available)
 
     def apply(self, party: Party, diff: SnapshotDiff) -> None:
         for device in party.devices:

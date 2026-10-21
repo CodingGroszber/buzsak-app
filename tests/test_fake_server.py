@@ -110,6 +110,57 @@ def test_fake_server_state_and_mode_command_update_only_simulated_values(fake_ap
         assert relay is not None and relay.value is False
 
 
+def test_fake_plc_refill_uses_versioned_command_and_confirms_only_simulated_state(fake_api_server) -> None:
+    url, api = fake_api_server
+
+    async def exercise():
+        async with ServerClient(url, token="fake-operator") as client:
+            before = parse_snapshot(await client.fetch_state()).parties[0].devices[0]
+            assert before.capability("refill").enabled
+            assert before.parameter("refill_active").value is False
+            receipt = await client.submit_command(
+                "garden-plc", action_id="refill", params={}, idempotency_key="one-refill")
+            duplicate = await client.submit_command(
+                "garden-plc", action_id="refill", params={}, idempotency_key="one-refill")
+            assert duplicate.command_id == receipt.command_id and duplicate.deduplicated
+            status = await client.command_status(receipt.command_id)
+            after = parse_snapshot(await client.fetch_state()).parties[0].devices[0]
+            assert status.device_id == "garden-plc" and status.action_id == "refill"
+            assert status.status == "confirmed"
+            assert after.parameter("refill_active").value is True
+            with pytest.raises(CommandApiError):
+                await client.submit_command(
+                    "garden-plc", action_id="refill", params={}, idempotency_key="already-active")
+            with pytest.raises(CommandApiError):
+                await client.submit_command(
+                    "garden-plc", action_id="set_output", params={"name": "well_pump", "state": True},
+                    idempotency_key="forbidden-direct-output")
+
+    asyncio.run(exercise())
+    assert len(api.commands) == 1
+
+
+@pytest.mark.parametrize("scenario", ["uncertain", "failure", "offline", "stale"])
+def test_fake_plc_refill_failure_scenarios_do_not_change_pump_state(fake_api_server, scenario) -> None:
+    url, api = fake_api_server
+    api.scenario = scenario
+
+    async def exercise():
+        async with ServerClient(url, token="fake-operator") as client:
+            if scenario in {"offline", "stale"}:
+                with pytest.raises(CommandApiError):
+                    await client.submit_command("garden-plc", action_id="refill", params={}, idempotency_key="no-retry")
+            else:
+                receipt = await client.submit_command("garden-plc", action_id="refill", params={}, idempotency_key="no-retry")
+                status = await client.command_status(receipt.command_id)
+                assert status.status == (
+                    "uncertain" if scenario == "uncertain" else "failed")
+            source = parse_snapshot(await client.fetch_state()).parties[0].devices[0]
+            assert source.parameter("refill_active").value is False
+
+    asyncio.run(exercise())
+
+
 def test_fake_server_enforces_automatic_interlock_and_light_exception(fake_api_server) -> None:
     url, _ = fake_api_server
 
