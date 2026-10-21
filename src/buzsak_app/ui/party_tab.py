@@ -192,10 +192,12 @@ class PartyTab:
                 content=self.control, padding=ft.Padding.all(SPACING.md), expand=True)
 
     def set_connection_available(self, available: bool) -> None:
-        """Propagate server freshness to PLC controls without altering readings (CTL-12)."""
+        """Gate server-backed configuration without altering readings (CTL-12, VLV-11)."""
         for section in self._sections.values():
             if section._pump is not None:
                 section._pump.set_available(available)
+            if section._greenhouse is not None:
+                section._greenhouse.set_available(available)
 
     def apply(self, party: Party, diff: SnapshotDiff) -> None:
         for device in party.devices:

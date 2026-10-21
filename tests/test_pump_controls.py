@@ -45,6 +45,61 @@ def panel(source=None, handler=None, lookup=None):
                         on_check_command=lookup)
 
 
+def test_pump_measurements_use_greenhouse_style_status_name_value_rows():
+    import flet as ft
+    from buzsak_app.ui.parameter_readout import SensorReadout
+
+    control = panel(handler=lambda *args: None)
+    for identifier in ("water_level_liters", "pressure_bar"):
+        row = control._readouts[identifier]
+        assert isinstance(row, SensorReadout)
+        assert row.control.controls[:2] == [row._indicator, row._label]
+        assert row._indicator.icon == ft.Icons.CHECK_CIRCLE
+        assert not row._badge.control.visible
+    assert control._readouts["pressure_bar"]._value.value == "2.80 bar"
+    assert control._readouts["water_level_liters"]._value.value == "640 L"
+    assert control._readouts["pressure_bar"]._label.expand
+
+
+@pytest.mark.parametrize(("measurement", "signal"), [
+    ("water_level_liters", "water_level_signal"), ("pressure_bar", "pressure_signal"),
+])
+@pytest.mark.parametrize("quality", list(ValueState)[1:])
+def test_pump_sensor_status_refreshes_when_only_signal_quality_changes(measurement, signal, quality):
+    import flet as ft
+
+    control = panel()
+    row = control._readouts[measurement]
+    original = control._device
+    updated = replace(original, parameters=tuple(
+        replace(parameter, state=quality) if parameter.id == signal else parameter
+        for parameter in original.parameters
+    ))
+    control.sync(updated, changed=frozenset({signal}))
+    assert control._readouts[measurement] is row
+    assert row._indicator.icon != ft.Icons.CHECK_CIRCLE
+    assert row._badge.control.visible
+    control.sync(original, changed=frozenset({signal}))
+    assert row._indicator.icon == ft.Icons.CHECK_CIRCLE
+    assert not row._badge.control.visible
+
+
+def test_pump_sensor_faults_and_missing_signals_are_not_shown_as_healthy():
+    import flet as ft
+    from buzsak_app.ui import strings
+
+    control = panel(device(pressure_signal=False, water_level_signal=None))
+    assert control._readouts["pressure_bar"]._indicator.semantics_label == strings.SENSOR_FAULT
+    assert control._readouts["water_level_liters"]._indicator.icon != ft.Icons.CHECK_CIRCLE
+
+
+def test_pump_sensor_zero_is_a_valid_displayed_value_not_missing():
+    control = panel(device(pressure_bar=0.0, water_level_liters=0.0))
+    assert control._readouts["pressure_bar"]._value.value == "0.00 bar"
+    assert control._readouts["water_level_liters"]._value.value == "0 L"
+    assert not control._readouts["pressure_bar"]._badge.control.visible
+
+
 def test_fill_requires_server_capability_and_handler():
     assert panel()._fill.disabled
     assert not panel(handler=lambda *args: None)._fill.disabled

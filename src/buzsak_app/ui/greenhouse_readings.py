@@ -5,6 +5,7 @@ from __future__ import annotations
 import flet as ft
 
 from buzsak_app.domain.models import Device, Parameter, ValueState
+from buzsak_app.domain.presentation import display_number
 from buzsak_app.ui import strings, theme
 from buzsak_app.ui.components import StatusChip, muted_text, section_title
 from buzsak_app.ui.parameter_readout import ParameterReadout as _Readout
@@ -27,45 +28,89 @@ _HANDLED_PARAMETER_IDS = frozenset({
 
 class _SensorPanel:
     def __init__(self, name: str, title: str) -> None:
-        self._title = ft.Text(title, size=TYPE.title,
-                              weight=ft.FontWeight.W_600)
+        self._title = ft.Text(title, size=TYPE.body,
+                              weight=ft.FontWeight.W_600, expand=True)
+        self._indicator = ft.Icon(ft.Icons.CHECK_CIRCLE, size=TYPE.body)
         self._health = StatusChip()
         self._temperature = _Readout(strings.SENSOR_TEMPERATURE)
         self._humidity = _Readout(strings.SENSOR_HUMIDITY)
         self._age = muted_text()
         self._error = muted_text()
         self._error.visible = False
+        self._measurements = ft.Row([
+            self._temperature._value, ft.Text(
+                strings.SENSOR_READING_SEPARATOR, size=TYPE.body),
+            self._humidity._value,
+        ], spacing=SPACING.xs, tight=True)
+        self._row = ft.Row(
+            [self._indicator, self._title, self._measurements], spacing=SPACING.sm,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+        self._quality = ft.Row([
+            self._temperature._badge.control, self._humidity._badge.control,
+        ], spacing=SPACING.xs, wrap=True, visible=False)
         self.control = ft.Container(
             content=ft.Column(
-                [
-                    ft.Row([self._title, self._health.control],
-                           alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-                    self._temperature.control,
-                    self._humidity.control,
-                    self._age,
-                    self._error,
-                ],
-                spacing=SPACING.sm,
+                [self._row, self._health.control, self._quality, self._error],
+                spacing=SPACING.xs,
+                tight=True,
             ),
-            padding=ft.Padding.all(SPACING.md),
-            bgcolor=ft.Colors.SURFACE_CONTAINER_LOW,
-            border_radius=ft.BorderRadius.all(RADIUS.card),
+            padding=ft.Padding.symmetric(vertical=SPACING.xs),
             col={"xs": 12, "md": 12},
         )
         self._name = name
 
     def sync(self, device: Device) -> None:
         ok = device.parameter(f"{self._name}_ok")
+        self._health.control.visible = True
         if ok is None or ok.state is not ValueState.GOOD or not isinstance(ok.value, bool):
             self._health.set(strings.STATE_UNAVAILABLE,
                              "cloud_off", Tone.ERROR)
+            icon, tone, status = ft.Icons.CLOUD_OFF, Tone.ERROR, strings.STATE_UNAVAILABLE
         elif ok.value:
             self._health.set(strings.SENSOR_OK, "check_circle", Tone.OK)
+            self._health.control.visible = False
+            icon, tone, status = ft.Icons.CHECK_CIRCLE, Tone.OK, strings.SENSOR_OK
         else:
             self._health.set(strings.SENSOR_FAULT, "error_outline", Tone.ERROR)
+            icon, tone, status = ft.Icons.ERROR_OUTLINE, Tone.ERROR, strings.SENSOR_FAULT
         self._temperature.update(
             device.parameter(f"{self._name}_temperature_c"))
         self._humidity.update(device.parameter(f"{self._name}_humidity_pct"))
+        quality_states = []
+        for suffix, readout in (("temperature_c", self._temperature), ("humidity_pct", self._humidity)):
+            parameter = device.parameter(f"{self._name}_{suffix}")
+            number = display_number(
+                parameter) if parameter is not None else None
+            if number is not None:
+                readout._value.value = f"{number.text}{number.unit or ''}"
+            elif parameter is not None and parameter.state is ValueState.NO_DATA:
+                readout._value.value = strings.STATE_NO_DATA
+            else:
+                readout._value.value = strings.VALUE_MISSING
+            state = parameter.state if parameter is not None else ValueState.UNAVAILABLE
+            if parameter is not None and parameter.state is ValueState.GOOD and number is None:
+                state = ValueState.INVALID
+                readout._badge.set(strings.STATE_INVALID,
+                                   "error_outline", Tone.ERROR)
+                readout._badge.control.visible = True
+            quality_states.append(state)
+        self._quality.visible = any(
+            state is not ValueState.GOOD for state in quality_states)
+        if self._quality.visible:
+            quality = next(state for state in (
+                ValueState.INVALID, ValueState.UNAVAILABLE, ValueState.NO_DATA, ValueState.STALE
+            ) if state in quality_states)
+            icon, tone, status = {
+                ValueState.INVALID: (ft.Icons.ERROR_OUTLINE, Tone.ERROR, strings.STATE_INVALID),
+                ValueState.UNAVAILABLE: (ft.Icons.CLOUD_OFF, Tone.ERROR, strings.STATE_UNAVAILABLE),
+                ValueState.NO_DATA: (ft.Icons.HOURGLASS_EMPTY, Tone.MUTED, strings.STATE_NO_DATA),
+                ValueState.STALE: (ft.Icons.HISTORY, Tone.WARNING, strings.STATE_STALE),
+            }[quality]
+        self._indicator.icon = icon
+        self._indicator.color = theme.tone_color(tone)
+        self._indicator.tooltip = status
+        self._indicator.semantics_label = status
 
         age = device.parameter(f"{self._name}_age_s")
         if age is None or age.state is not ValueState.GOOD or not isinstance(age.value, int):
@@ -80,6 +125,10 @@ class _SensorPanel:
         self._error.value = strings.sensor_last_error(
             str(error)) if error else ""
         self._error.visible = bool(error)
+        self.control.tooltip = "\n".join((
+            status, self._age.value or "", self._temperature.control.tooltip or "",
+            self._humidity.control.tooltip or "",
+        ))
 
 
 class GreenhouseReadings:
@@ -103,8 +152,8 @@ class GreenhouseReadings:
         self._mist_panel = self._automation_panel(
             strings.MIST_AUTOMATION,
             [
-                ft.Column([self._mist_target.control, self._mist_duty.control],
-                          spacing=SPACING.sm),
+                ft.Row([self._mist_target.control, self._mist_duty.control],
+                       spacing=SPACING.sm),
                 self._mist_progress,
                 self._mist_progress_text,
                 self._mist_valve.control,
@@ -127,7 +176,8 @@ class GreenhouseReadings:
                 self._rain_last_run.control,
                 self._rain_time_sync.control,
             ],
-            spacing=SPACING.sm,
+            spacing=SPACING.xs,
+            tight=True,
         )
         self._rain_panel = self._automation_panel(
             strings.RAIN_AUTOMATION,
@@ -139,6 +189,12 @@ class GreenhouseReadings:
         )
         self.control = ft.Column(
             [
+                section_title(strings.SENSORS),
+                ft.ResponsiveRow(
+                    [sensor.control for sensor in self._sensors],
+                    spacing=SPACING.xs,
+                    run_spacing=SPACING.xs,
+                ),
                 ft.Row([section_title(strings.AUTOMATION), self._mode_badge.control],
                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
                 ft.ResponsiveRow(
@@ -146,14 +202,8 @@ class GreenhouseReadings:
                     spacing=SPACING.sm,
                     run_spacing=SPACING.sm,
                 ),
-                section_title(strings.SENSORS),
-                ft.ResponsiveRow(
-                    [sensor.control for sensor in self._sensors],
-                    spacing=SPACING.sm,
-                    run_spacing=SPACING.sm,
-                ),
             ],
-            spacing=SPACING.md,
+            spacing=SPACING.sm,
             tight=True,
         )
         self.sync(device)
@@ -164,9 +214,10 @@ class GreenhouseReadings:
             content=ft.Column(
                 [ft.Text(title, size=TYPE.body,
                          weight=ft.FontWeight.W_600), *contents],
-                spacing=SPACING.sm,
+                spacing=SPACING.xs,
+                tight=True,
             ),
-            padding=ft.Padding.all(SPACING.md),
+            padding=ft.Padding.all(SPACING.sm),
             bgcolor=ft.Colors.SURFACE_CONTAINER_LOW,
             border_radius=ft.BorderRadius.all(RADIUS.card),
             col={"xs": 12, "md": 12},

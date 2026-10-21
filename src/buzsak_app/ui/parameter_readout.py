@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import math
+
 import flet as ft
 
 from buzsak_app.domain.models import Parameter, ValueState
 from buzsak_app.domain.presentation import display_number
-from buzsak_app.ui import strings
+from buzsak_app.ui import strings, theme
 from buzsak_app.ui.components import StatusChip
 from buzsak_app.ui.theme import SPACING, TYPE
 from buzsak_app.ui.view_models import Tone
@@ -94,3 +96,64 @@ class ParameterReadout:
         self._badge.control.visible = badge is not None
         if badge is not None:
             self._badge.set(*badge)
+
+
+class SensorReadout(ParameterReadout):
+    """Compact status/name/value row gated by sensor signal quality (DATA-02, UX-29)."""
+
+    def __init__(self, label: str) -> None:
+        super().__init__(label)
+        self._parameter: Parameter | None = None
+        self._signal: Parameter | None = None
+        self._indicator = ft.Icon(ft.Icons.CLOUD_OFF, size=TYPE.body)
+        self._label.size = TYPE.body
+        self._label.weight = ft.FontWeight.W_600
+        self._label.color = None
+        self.control.controls.insert(0, self._indicator)
+
+    def update(
+        self, parameter: Parameter | None, *, text: str | None = None,
+        true_text: str | None = None, false_text: str | None = None,
+    ) -> None:
+        super().update(parameter, text=text, true_text=true_text, false_text=false_text)
+        self._parameter = parameter
+        self._refresh_indicator()
+
+    def set_signal(self, signal: Parameter | None) -> None:
+        """Apply the independent server validity flag, never infer a healthy probe (DATA-02)."""
+        self._signal = signal
+        self._refresh_indicator()
+
+    def _refresh_indicator(self) -> None:
+        states = [parameter.state if parameter is not None else ValueState.UNAVAILABLE
+                  for parameter in (self._parameter, self._signal)]
+        quality = next((state for state in (
+            ValueState.INVALID, ValueState.UNAVAILABLE, ValueState.NO_DATA, ValueState.STALE
+        ) if state in states), ValueState.GOOD)
+        if quality is ValueState.GOOD and (
+            type(self._parameter.value) not in (int, float)
+            or not math.isfinite(self._parameter.value)
+            or type(self._signal.value) is not bool
+        ):
+            quality = ValueState.INVALID
+        if quality is not ValueState.GOOD:
+            status, _, tone = _STATE_BADGES[quality]
+            icon = {
+                ValueState.INVALID: ft.Icons.ERROR_OUTLINE,
+                ValueState.UNAVAILABLE: ft.Icons.CLOUD_OFF,
+                ValueState.NO_DATA: ft.Icons.HOURGLASS_EMPTY,
+                ValueState.STALE: ft.Icons.HISTORY,
+            }[quality]
+        elif self._signal.value is False:
+            status, icon, tone = strings.SENSOR_FAULT, ft.Icons.ERROR_OUTLINE, Tone.ERROR
+        else:
+            status, icon, tone = strings.SENSOR_OK, ft.Icons.CHECK_CIRCLE, Tone.OK
+        self._indicator.icon = icon
+        self._indicator.color = theme.tone_color(tone)
+        self._indicator.tooltip = self._indicator.semantics_label = status
+        self._badge.control.visible = quality is not ValueState.GOOD or self._signal.value is False
+        if self._badge.control.visible:
+            self._badge.set(
+                status, "history" if quality is ValueState.STALE else "error_outline", tone)
+        self.control.tooltip = "\n".join(
+            (_detail(self._parameter), _detail(self._signal)))

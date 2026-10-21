@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import uuid
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
@@ -63,6 +64,19 @@ def _schema_accepts(device: Device, action_id: str, params: Mapping[str, Any]) -
     schema = capability.params_schema if capability is not None else None
     if not isinstance(schema, Mapping) or set(schema) != set(params):
         return False
+    if action_id == "set_rain_schedule":
+        expected = {"start": "HH:MM", "duration_minutes": {
+            "type": "int", "minimum": 1, "maximum": 60}}
+        bounds = schema.get("duration_minutes")
+        return (
+            schema == expected
+            and isinstance(bounds, Mapping)
+            and type(bounds.get("minimum")) is int and type(bounds.get("maximum")) is int
+            and isinstance(params.get("start"), str)
+            and re.fullmatch(r"(?:[01][0-9]|2[0-3]):[0-5][0-9]", params["start"]) is not None
+            and type(params.get("duration_minutes")) is int
+            and 1 <= params["duration_minutes"] <= 60
+        )
     for key, expected in schema.items():
         value = params[key]
         if expected == "bool":
@@ -92,6 +106,8 @@ class GreenhouseControls:
         self._device = device
         self._busy = False
         self._locked = False
+        self._rain_available = True
+        self._rain_dirty = False
         self._intent_keys: dict[str, str] = {}
         self._active_intent: str | None = None
         self._command_id: str | None = None
@@ -100,6 +116,27 @@ class GreenhouseControls:
         self._mode_hint = muted_text()
         self._reason = muted_text()
         self._message = muted_text()
+        self._rain_start = ft.TextField(
+            label=strings.RAIN_SCHEDULE_START, on_change=self._rain_draft_changed,
+            expand=True, tooltip=strings.RAIN_SCHEDULE_TIMEZONE,
+        )
+        self._rain_minutes = ft.TextField(
+            label=strings.RAIN_SCHEDULE_DURATION, on_change=self._rain_draft_changed,
+            keyboard_type=ft.KeyboardType.NUMBER,
+            expand=True,
+        )
+        self._rain_reason = muted_text()
+        self._rain_message = muted_text()
+        self._rain_apply = ft.FilledButton(
+            strings.RAIN_SCHEDULE_APPLY, icon=ft.Icons.CHECK, on_click=self._apply_rain_schedule,
+            tooltip=strings.RAIN_SCHEDULE_WARNING,
+        )
+        self._rain_schedule = ft.Column([
+            section_title(strings.RAIN_SCHEDULE_TITLE),
+            ft.Row([self._rain_start, self._rain_minutes, self._rain_apply],
+                   spacing=SPACING.sm, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            self._rain_reason, self._rain_message,
+        ], spacing=SPACING.xs, tight=True)
         self._check_status = ft.TextButton(
             strings.COMMAND_CHECK_STATUS,
             visible=False,
@@ -177,17 +214,19 @@ class GreenhouseControls:
                 self._check_status,
                 self._retry,
             ],
-            spacing=SPACING.sm,
+            spacing=SPACING.xs,
+            tight=True,
         )
         self.control = ft.Column(
-            [self._control_panel, self._readings.control],
-            spacing=SPACING.lg,
+            [self._control_panel, self._rain_schedule, self._readings.control],
+            spacing=SPACING.sm, tight=True,
         )
         self.sync(device)
 
     def sync(self, device: Device) -> None:
         self._device = device
         self._readings.sync(device)
+        self._sync_rain_editor()
         mode = _mode(device)
         self._mode.selected = [mode] if mode else []
         mode_capability = device.capability("set_mode")
@@ -201,11 +240,7 @@ class GreenhouseControls:
             and device.health.status is HealthStatus.HEALTHY
         )
         self._mode.disabled = not mode_ready or self._busy
-        self._mode_hint.value = (
-            strings.MODE_MANUAL_HINT if mode == "manual"
-            else strings.MODE_AUTOMATIC_HINT if mode == "automatic"
-            else strings.MODE_UNKNOWN_HINT
-        )
+        self._mode_hint.value = strings.MODE_CHANGE_SAFETY
         output_capability = device.capability("set_output")
         disabled_capability = (
             mode_capability if mode_capability is not None and not mode_capability.enabled
@@ -279,6 +314,88 @@ class GreenhouseControls:
                 f"{hour.value:02d}:{minute.value:02d}", round(duration.value / 60))
         return ""
 
+    def _reported_rain_schedule(self) -> dict[str, Any] | None:
+        values = [_current(self._device, identifier) for identifier in (
+            "rain_start_hour", "rain_start_minute", "rain_duration_s")]
+        if any(parameter is None or type(parameter.value) is not int for parameter in values):
+            return None
+        hour, minute, duration = (parameter.value for parameter in values)
+        if not (0 <= hour <= 23 and 0 <= minute <= 59 and 60 <= duration <= 3600 and duration % 60 == 0):
+            return None
+        return {"start": f"{hour:02d}:{minute:02d}", "duration_minutes": duration // 60}
+
+    def _rain_edit_reason(self) -> str:
+        capability = self._device.capability("set_rain_schedule")
+        if capability is None or not capability.enabled:
+            return capability.disabled_reason if capability is not None and capability.disabled_reason else strings.RAIN_SCHEDULE_UNAVAILABLE
+        if not _schema_accepts(self._device, "set_rain_schedule", {"start": "00:00", "duration_minutes": 1}):
+            return strings.CONTROL_SCHEMA_INVALID
+        if self._locked:
+            return strings.COMMAND_UNCERTAIN_LOCK
+        if self._on_command is None:
+            return strings.CONTROL_NO_HANDLER
+        if not self._rain_available or not self._device.enabled or self._device.health.status is not HealthStatus.HEALTHY:
+            return strings.CONTROL_DEVICE_UNAVAILABLE
+        if _mode(self._device) != "manual":
+            return strings.RAIN_SCHEDULE_MANUAL
+        if _bool(self._device, "rain_valve_on") is not False or _bool(self._device, "relay2_rain") is not False:
+            return strings.RAIN_SCHEDULE_IDLE
+        if self._reported_rain_schedule() is None:
+            return strings.RAIN_SCHEDULE_STALE
+        return ""
+
+    def _sync_rain_editor(self) -> None:
+        self._rain_schedule.visible = _mode(self._device) == "manual"
+        self._message.visible = bool(
+            self._message.value) and self._last_action != "set_rain_schedule"
+        self._rain_message.visible = bool(self._rain_message.value)
+        reported = self._reported_rain_schedule()
+        if reported is not None and (
+            not self._rain_dirty or (
+                self._rain_start.value == reported["start"]
+                and self._rain_minutes.value == str(reported["duration_minutes"])
+            )
+        ):
+            self._rain_start.value = reported["start"]
+            self._rain_minutes.value = str(reported["duration_minutes"])
+            self._rain_dirty = False
+        reason = self._rain_edit_reason()
+        self._rain_reason.value = reason
+        self._rain_reason.visible = bool(reason)
+        self._rain_apply.disabled = self._busy or bool(reason)
+        self._rain_start.disabled = self._rain_minutes.disabled = self._busy or bool(
+            reason)
+
+    def _rain_draft_changed(self, _event: ft.Event) -> None:
+        self._rain_dirty = True
+        self._rain_message.value = ""
+        self._rain_message.visible = False
+
+    def set_available(self, available: bool) -> None:
+        """Gate schedule editing on fresh reachable server state (VLV-11)."""
+        self._rain_available = available
+        self._sync_rain_editor()
+
+    async def _apply_rain_schedule(self, _event: ft.Event) -> None:
+        start = self._rain_start.value or ""
+        raw_minutes = self._rain_minutes.value or ""
+        minutes = int(raw_minutes) if re.fullmatch(
+            r"[0-9]{1,2}", raw_minutes) else None
+        params = {"start": start, "duration_minutes": minutes}
+        if (
+            re.fullmatch(r"(?:[01][0-9]|2[0-3]):[0-5][0-9]", start) is None
+            or type(minutes) is not int or not 1 <= minutes <= 60
+        ):
+            self._rain_message.value = strings.RAIN_SCHEDULE_INVALID
+            self._rain_message.color = theme.tone_color(Tone.ERROR)
+            self._rain_message.visible = True
+            if self._page is not None:
+                self._page.update()
+            return
+        self._rain_dirty = True
+        self._rain_message.value = ""
+        await self._run("set_rain_schedule", params)
+
     def _not_locked(self) -> bool:
         return not self._locked
 
@@ -298,6 +415,9 @@ class GreenhouseControls:
     def _show_command_status(self, status: str, reason: str | None = None) -> None:
         self._message.value = strings.command_status(status, reason)
         self._message.color = theme.tone_color(command_state_tone(status))
+        if self._last_action == "set_rain_schedule":
+            self._rain_message.value = self._message.value
+            self._rain_message.color = self._message.color
 
     async def _relay_clicked(self, output_id: str) -> None:
         suffix = next(parameter_id for relay, parameter_id,
@@ -330,6 +450,7 @@ class GreenhouseControls:
             self._message.value = (
                 strings.CONTROL_SCHEMA_INVALID
                 if not _schema_accepts(self._device, action_id, params)
+                else self._rain_edit_reason() if action_id == "set_rain_schedule"
                 else self._disabled_reason(
                     self._device.capability(action_id), ready=False)
             )
@@ -339,14 +460,22 @@ class GreenhouseControls:
             return
         intent = json.dumps([action_id, params],
                             sort_keys=True, separators=(",", ":"))
-        key = self._intent_keys.setdefault(intent, str(uuid.uuid4()))
+        if action_id == "set_rain_schedule":
+            key = str(uuid.uuid4())
+            self._intent_keys[intent] = key
+        else:
+            key = self._intent_keys.setdefault(intent, str(uuid.uuid4()))
         self._active_intent = intent
         self._last_action = action_id
         self._last_params = dict(params)
+        self._command_id = None
         self._retry.visible = False
         self._busy = True
         self._message.value = strings.COMMAND_SUBMITTING
         self._message.color = theme.tone_color(Tone.WARNING)
+        if action_id == "set_rain_schedule":
+            self._rain_message.value = self._message.value
+            self._rain_message.color = self._message.color
         self.sync(self._device)
         if self._page is not None:
             self._page.update()
@@ -362,25 +491,37 @@ class GreenhouseControls:
                 self._show_command_status("uncertain")
                 self._message.value += f" · {strings.COMMAND_UNCERTAIN_LOCK}"
         except AmbiguousCommandResult as error:
-            self._show_command_status("uncertain")
-            self._message.value += f". {strings.COMMAND_RETRY_SAME_INTENT}"
-            self._retry.visible = True
+            if action_id == "set_rain_schedule":
+                self._set_status("uncertain")
+            else:
+                self._show_command_status("uncertain")
+                self._message.value += f". {strings.COMMAND_RETRY_SAME_INTENT}"
+                self._retry.visible = True
         except CommandApiError as error:
             self._intent_keys.pop(intent, None)
             self._active_intent = None
             self._message.value = f"{strings.COMMAND_REJECTED}: {error}"
             self._message.color = theme.tone_color(Tone.ERROR)
         except ApiError as error:
-            self._show_command_status("uncertain")
+            if action_id == "set_rain_schedule":
+                self._set_status("uncertain")
+            else:
+                self._show_command_status("uncertain")
             self._message.value += f" · {error}"
             self._check_status.visible = bool(
                 self._command_id and self._on_check_command)
         except Exception as error:
             logger.warning("command flow failed: %s", type(error).__name__)
-            self._message.value = strings.COMMAND_STATUS_UNAVAILABLE
-            self._message.color = theme.tone_color(Tone.WARNING)
+            if action_id == "set_rain_schedule":
+                self._set_status("uncertain")
+            else:
+                self._message.value = strings.COMMAND_STATUS_UNAVAILABLE
+                self._message.color = theme.tone_color(Tone.WARNING)
         finally:
             self._busy = False
+            if action_id == "set_rain_schedule":
+                self._rain_message.value = self._message.value
+                self._rain_message.color = self._message.color
             self.sync(self._device)
             if self._page is not None:
                 self._page.update()
@@ -446,6 +587,8 @@ class GreenhouseControls:
             return False
         if action_id == "set_mode":
             return True
+        if action_id == "set_rain_schedule":
+            return not self._rain_edit_reason()
         if action_id != "set_output":
             return False
         name = params.get("name")
@@ -465,6 +608,6 @@ class GreenhouseControls:
         )
 
     async def _retry_command(self, _: ft.Event) -> None:
-        if self._last_action is None or self._last_params is None:
+        if self._last_action is None or self._last_params is None or self._last_action == "set_rain_schedule":
             return
         await self._run(self._last_action, self._last_params)

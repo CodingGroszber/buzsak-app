@@ -5,6 +5,7 @@ All notable user-visible changes. Format: [Keep a Changelog](https://keepachange
 ## [Unreleased]
 
 ### Added
+- Dense, Manual-only Greenhouse daily Rain schedule editor matching the controller's HH:MM / 1..60 minute Apply form. Inputs and Apply share one compact row; explanatory helper copy and empty feedback space are omitted. Uses the separately gated server action, manual/idle/fresh prerequisites, preserved drafts, inline actionable status and GET-only ambiguity recovery; no automatic mode change, app-side scheduler or live schedule write (VLV-11, UX-27, SRV-17).
 - Pump **Fill tank** action through the server's PLC v4.1 refill command, fail-closed AUTO/idle/level/capability gates, single submission and GET-only uncertain-status recovery; no direct pump-output controls or live refill actuation (CTL-12, SRV-16).
 - Separate phone-local pending alert occurrences with explicit Android Acknowledge actions and restoration after relaunch/reboot; no server persistence. Native unit tests pass; device acceptance is pending (NTF-15/16, ADR-0010).
 - Reproducible, secret-scanned local Repomix reference export via `scripts/repomix.ps1` and its VS Code task (DOC-11).
@@ -13,6 +14,8 @@ All notable user-visible changes. Format: [Keep a Changelog](https://keepachange
 - Android launcher icon and splash artwork derived from `assets/app_logo.jpg`, with a transparent exterior and navy adaptive-icon background (UX-24).
 
 ### Changed
+- Pump tank-level and pressure readouts now match Greenhouse's compact status/name/value sensor rows, with healthy/fault/quality indicators driven by the corresponding fresh server validity flags; raw diagnostics stay hidden and refill gating is unchanged (UX-29).
+- Greenhouse Sensors now precede Automation, with compact unframed status/name/temperature–humidity rows, paired readings and routine age metadata in tooltips. Explicit fault/quality indicators remain; mist target/duty also share a row (VLV-08, UX-28).
 - Unified Pump/Greenhouse headers with muted firmware/IP and health, no raw device-name heading or duplicate identity footer. Greenhouse content now shrink-wraps and hides empty fallback grids instead of retaining a trailing wrapping firmware row (UX-26).
 - Pump now matches Greenhouse's narrow responsive sections and compact quality-aware tank/pressure and PLC-state readouts. Sensors/Diagnostics and the redundant `garden-plc` heading are omitted; firmware/IP and health sit discreetly in the header, and unknown-parameter fallback is retained (UX-25).
 - Active alert monitoring no longer intentionally stops on UI closure/task removal. Reopening reuses one Runtime and retains truth/cooldown state; Android timeout, sign-out and OS limitations still apply. Device acceptance is pending (UPD-03, NTF-03/14, ADR-0010).

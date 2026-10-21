@@ -1,12 +1,13 @@
 # Pump Tab
 
-Covers UX-01..UX-02, UX-25..UX-26, DATA-02, SSOT-07..SSOT-08, CTL-12, SRV-16.
+Covers UX-01..UX-02, UX-25..UX-26, UX-29, DATA-02, SSOT-07..SSOT-08, CTL-12, SRV-16.
 
 ## Content
 
 - Server-driven PUMP party and device sections, ordered as received.
 - Greenhouse-matched responsive device column, device health/header, section headings, compact label/value rows, quality badges and detailed timestamp tooltips. Greenhouse and Pump use the same ParameterReadout component.
 - Fill tank at the top, followed only by tank/pressure and PLC state (selector, request/active fill, pump outputs).
+- Tank level and pressure match the compact Greenhouse sensor rows: status icon and bold name at left, bold value/unit at right, with tighter spacing and no measurement-card frame. A healthy icon requires both a good numeric reading and its fresh true validity signal. Fault/quality badges remain explicit, zero stays a real value, and timestamp/signal details remain in the tooltip. Signal-only updates refresh the same row without recreating controls.
 - Sensors and Diagnostics are intentionally omitted, including their known raw-input, signal, indicator, controllability and legacy-contact fields; they do not reappear as generic cards. Their telemetry remains available to the safety gates. Unknown parameter ids retain generic KPI-card fallback.
 - The `garden-plc` device-name heading is omitted; firmware/IP and health remain in the same discreet header row used by Greenhouse. Identity includes quality text when stale/invalid/unavailable and updates in place even when device health is unchanged. There is no separate Device section; the underlying device ID and command routing are unchanged.
 

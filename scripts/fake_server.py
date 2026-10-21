@@ -6,6 +6,7 @@ import argparse
 import copy
 import hashlib
 import json
+import re
 import threading
 import time
 import uuid
@@ -99,6 +100,15 @@ class FakeApi:
             "revision": 0, "has_data": False,
         }
         device["parameters"] = list(params.values())
+        params["rain_duration_s"]["unit"] = "s"
+        device["capabilities"].append({
+            "action_id": "set_rain_schedule",
+            "params_schema": {"start": "HH:MM", "duration_minutes": {
+                "type": "int", "minimum": 1, "maximum": 60}},
+            "enabled": True, "disabled_reason": None, "retry_safe": False,
+            "timezone": "Europe/Budapest", "max_attempts": 1,
+            "effect": "controller_daily_rain_schedule",
+        })
         for capability in device["capabilities"]:
             capability["enabled"] = True
             capability["disabled_reason"] = None
@@ -290,6 +300,13 @@ class FakeApi:
                 return 202, self._receipt(command_id, True)
             if self.scenario in {"offline", "stale"}:
                 return 503, self._error("device_unavailable", "simulated unavailable device")
+            if device_id == _DEVICE_ID and any(
+                command["device_id"] == device_id
+                and command["status"] in {"pending", "dispatching", "sent", "acknowledged", "uncertain"}
+                and (action_id == "set_rain_schedule" or command["action_id"] == "set_rain_schedule")
+                for command in self.commands.values()
+            ):
+                return 409, self._error("conflict", "rain schedule edits require an idle command queue")
             if device_id == "garden-plc":
                 if action_id != "refill" or params:
                     return 400, self._error("unsupported_action", "only an empty refill request is supported")
@@ -310,6 +327,31 @@ class FakeApi:
                     or not 0 <= float(values["water_level_liters"]["value"]) < 1000
                 ):
                     return 409, self._error("precondition_failed", "refill requires AUTO, idle state and a valid level below 1000 L")
+            elif action_id == "set_rain_schedule":
+                capability = next(item for item in self._device()["capabilities"]
+                                  if item["action_id"] == action_id)
+                if capability["enabled"] is not True:
+                    return 403, self._error("control_disabled", "rain schedule is disabled")
+                if (
+                    set(params) != {"start", "duration_minutes"}
+                    or not isinstance(params.get("start"), str)
+                    or re.fullmatch(r"(?:[01][0-9]|2[0-3]):[0-5][0-9]", params["start"]) is None
+                    or type(params.get("duration_minutes")) is not int
+                    or not 1 <= params["duration_minutes"] <= 60
+                ):
+                    return 400, self._error("invalid_request", "expected HH:MM and integer duration_minutes from 1 to 60")
+                values = self._parameter_map()
+                required = ("mode", "rain_valve_on", "relay2_rain",
+                            "rain_start_hour", "rain_start_minute", "rain_duration_s")
+                if any(values[identifier]["stale"] or values[identifier]["quality"] != "good"
+                       or not values[identifier]["has_data"] for identifier in required):
+                    return 409, self._error("stale_telemetry", "schedule edits require fresh telemetry")
+                if self._device()["health"]["status"] != "healthy":
+                    return 503, self._error("device_unavailable", "controller is unavailable")
+                if values["mode"]["value"] != "manual" or any(
+                    values[identifier]["value"] != "false" for identifier in ("rain_valve_on", "relay2_rain")
+                ):
+                    return 409, self._error("precondition_failed", "schedule edits require manual mode and idle rain")
             elif action_id == "set_mode":
                 value = params.get("value") if set(
                     params) == {"value"} else None
@@ -360,8 +402,15 @@ class FakeApi:
         if action_id == "refill":
             values["refill_active"]["value"] = "true"
             values["well_pump"]["value"] = "true"
+        elif action_id == "set_rain_schedule":
+            hour, minute = params["start"].split(":")
+            values["rain_start_hour"]["value"] = str(int(hour))
+            values["rain_start_minute"]["value"] = str(int(minute))
+            values["rain_duration_s"]["value"] = str(
+                params["duration_minutes"] * 60)
         elif action_id == "set_mode":
             values["mode"]["value"] = params["value"]
+            values["rain_valve_on"]["value"] = "false"
             for relay, parameter_id in _RELAY_PARAMETERS.items():
                 if relay != "relay4":
                     values[parameter_id]["value"] = "false"

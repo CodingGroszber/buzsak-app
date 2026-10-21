@@ -13,7 +13,7 @@ import pytest
 from conftest import load_state_fixture
 
 from buzsak_app.api.client import AmbiguousCommandResult
-from buzsak_app.domain.models import Parameter, ValueState
+from buzsak_app.domain.models import Capability, Parameter, ValueState
 from buzsak_app.domain.snapshot import parse_snapshot
 from buzsak_app.ui import strings, theme
 from buzsak_app.ui.greenhouse_controls import GreenhouseControls
@@ -100,6 +100,251 @@ def _device_with_readings():
             observed_at=observed, last_changed_at=observed, revision=1,
         ))
     return replace(device, parameters=tuple(parameters))
+
+
+def _rain_controls(*, enabled=True, mode="manual", handler=None, lookup=None):
+    device = _device_with_readings()
+    device = replace(device, parameters=tuple(
+        replace(parameter, value=mode) if parameter.id == "mode" else parameter
+        for parameter in device.parameters
+    ), capabilities=tuple(replace(capability, enabled=True, disabled_reason=None)
+                          for capability in device.capabilities) + (Capability(
+                              "set_rain_schedule",
+                              {"start": "HH:MM", "duration_minutes": {
+                                  "type": "int", "minimum": 1, "maximum": 60}},
+                              enabled, None if enabled else "Rain schedule disabled by deployment",
+                          ),))
+    return GreenhouseControls(device, page=None, on_command=handler, on_check_command=lookup)
+
+
+def test_rain_editor_loads_reported_schedule_and_requires_manual_mode_and_capability():
+    panel = _rain_controls(handler=lambda *args: None)
+    assert panel._rain_start.value == "05:00"
+    assert panel._rain_minutes.value == "20"
+    assert not panel._rain_apply.disabled
+    assert _rain_controls(
+        mode="automatic", handler=lambda *args: None)._rain_apply.disabled
+    assert _rain_controls()._rain_apply.disabled
+    blocked = _rain_controls(enabled=False, handler=lambda *args: None)
+    assert blocked._rain_apply.disabled
+    assert blocked._rain_reason.value == "Rain schedule disabled by deployment"
+
+
+def test_rain_editor_is_compact_and_has_no_visible_helper_copy():
+    panel = _rain_controls(handler=lambda *args: None)
+    row = panel._rain_schedule.controls[1]
+    assert isinstance(row, ft.Row)
+    assert row.controls == [panel._rain_start,
+                            panel._rain_minutes, panel._rain_apply]
+    assert len(panel._rain_schedule.controls) == 4
+    assert not panel._rain_message.visible and not panel._rain_reason.visible
+    assert panel._rain_apply.tooltip == strings.RAIN_SCHEDULE_WARNING
+    assert panel.control.spacing == theme.SPACING.sm
+
+
+def test_rain_editor_visibility_tracks_reported_mode_without_discarding_drafts():
+    panel = _rain_controls(handler=lambda *args: None)
+    assert panel._rain_schedule.visible
+    panel._rain_start.value = "06:15"
+    panel._rain_start.on_change(None)
+    manual = panel._device
+    automatic = replace(manual, parameters=tuple(
+        replace(parameter, value="automatic") if parameter.id == "mode" else parameter
+        for parameter in manual.parameters
+    ))
+    panel.sync(automatic)
+    assert not panel._rain_schedule.visible
+    panel.sync(manual)
+    assert panel._rain_schedule.visible and panel._rain_start.value == "06:15"
+    stale = replace(manual, parameters=tuple(
+        replace(
+            parameter, state=ValueState.STALE) if parameter.id == "mode" else parameter
+        for parameter in manual.parameters
+    ))
+    panel.sync(stale)
+    assert not panel._rain_schedule.visible
+
+
+@pytest.mark.parametrize(("start", "minutes"), [
+    ("5:00", "10"), ("24:00", "10"), ("05:60", "10"),
+    ("05:00", "0"), ("05:00", "61"), ("05:00", "1.5"),
+    ("05:00", "True"), ("05:00", ""), ("\uff10\uff15:00", "10"),
+])
+def test_rain_editor_rejects_invalid_input_without_submitting(start, minutes):
+    calls = []
+
+    async def submit(*args):
+        calls.append(args)
+        return "confirmed"
+
+    panel = _rain_controls(handler=submit)
+    panel._rain_start.value = start
+    panel._rain_minutes.value = minutes
+    asyncio.run(panel._rain_apply.on_click(None))
+    assert not calls
+    assert panel._rain_message.value == strings.RAIN_SCHEDULE_INVALID
+
+
+def test_rain_editor_submits_one_intent_and_keeps_reported_readbacks_unchanged():
+    calls = []
+
+    async def submit(device_id, action_id, params, key, on_status):
+        calls.append((device_id, action_id, dict(params), key))
+        assert panel._rain_apply.disabled
+        assert panel._mode.disabled
+        on_status("confirmed", None, "rain-1")
+        return "confirmed"
+
+    panel = _rain_controls(handler=submit)
+    panel._rain_start.value = "23:55"
+    panel._rain_minutes.value = "60"
+    asyncio.run(panel._rain_apply.on_click(None))
+    assert len(calls) == 1
+    assert calls[0][:3] == ("valve-controller", "set_rain_schedule",
+                            {"start": "23:55", "duration_minutes": 60})
+    assert panel._readings._rain_time._value.value == "05:00"
+    assert panel._readings._rain_duration._value.value == "1200 s"
+
+
+def test_ambiguous_rain_write_locks_controller_without_retry():
+    calls = []
+
+    async def submit(*args):
+        calls.append(args)
+        raise AmbiguousCommandResult("lost schedule response")
+
+    panel = _rain_controls(handler=submit)
+    panel._rain_minutes.value = "10"
+    asyncio.run(panel._rain_apply.on_click(None))
+    asyncio.run(panel._rain_apply.on_click(None))
+    asyncio.run(panel._retry_command(None))
+    assert len(calls) == 1
+    assert panel._locked and panel._rain_apply.disabled and panel._mode.disabled
+    assert not panel._retry.visible
+
+
+def test_rain_polling_preserves_unsaved_drafts_and_offline_blocks_apply():
+    panel = _rain_controls(handler=lambda *args: None)
+    panel._rain_start.value = "06:15"
+    panel._rain_minutes.value = "12"
+    panel._rain_start.on_change(None)
+    panel.sync(panel._device)
+    assert panel._rain_start.value == "06:15" and panel._rain_minutes.value == "12"
+    panel.set_available(False)
+    assert panel._rain_apply.disabled
+
+
+@pytest.mark.parametrize("identifier", [
+    "mode", "rain_valve_on", "relay2_rain", "rain_start_hour", "rain_start_minute", "rain_duration_s",
+])
+@pytest.mark.parametrize("quality", [ValueState.STALE, ValueState.INVALID, ValueState.UNAVAILABLE, ValueState.NO_DATA])
+def test_rain_schedule_requires_fresh_good_prerequisites(identifier, quality):
+    panel = _rain_controls(handler=lambda *args: None)
+    panel.sync(replace(panel._device, parameters=tuple(
+        replace(parameter, state=quality) if parameter.id == identifier else parameter
+        for parameter in panel._device.parameters
+    )))
+    assert panel._rain_apply.disabled
+
+
+@pytest.mark.parametrize("identifier", ["rain_valve_on", "relay2_rain"])
+def test_rain_schedule_requires_both_rain_signals_idle(identifier):
+    panel = _rain_controls(handler=lambda *args: None)
+    panel.sync(replace(panel._device, parameters=tuple(
+        replace(parameter, value=True) if parameter.id == identifier else parameter
+        for parameter in panel._device.parameters
+    )))
+    assert panel._rain_apply.disabled
+
+
+def test_rain_schedule_rejects_unknown_or_boolean_schema_bounds():
+    panel = _rain_controls(handler=lambda *args: None)
+    for schema in (
+        {"start": "HH:MM", "duration_minutes": {
+            "type": "int", "minimum": True, "maximum": 60}},
+        {"start": "string", "duration_minutes": "int"},
+    ):
+        panel.sync(replace(panel._device, capabilities=tuple(
+            replace(
+                capability, params_schema=schema) if capability.action_id == "set_rain_schedule" else capability
+            for capability in panel._device.capabilities
+        )))
+        assert panel._rain_apply.disabled
+
+
+def test_uncertain_rain_command_recovers_with_get_only_status():
+    submissions = []
+    lookups = []
+
+    async def submit(*args):
+        submissions.append(args)
+        args[-1]("uncertain", None, "rain-uncertain-1")
+        return "uncertain"
+
+    async def lookup(command_id, on_status):
+        lookups.append(command_id)
+        on_status("confirmed", None, command_id)
+        return "confirmed"
+
+    panel = _rain_controls(handler=submit, lookup=lookup)
+    asyncio.run(panel._rain_apply.on_click(None))
+    assert panel._check_status.visible and panel._rain_apply.disabled
+    asyncio.run(panel._check_status.on_click(None))
+    assert len(submissions) == 1 and lookups == ["rain-uncertain-1"]
+    assert not panel._locked and not panel._check_status.visible
+
+
+def test_distinct_explicit_rain_submissions_use_distinct_keys_after_definitive_failure():
+    keys = []
+
+    async def submit(device_id, action_id, params, key, on_status):
+        keys.append(key)
+        on_status("failed", "device_rejected", "rain-failed-1")
+        return "failed"
+
+    panel = _rain_controls(handler=submit)
+    asyncio.run(panel._rain_apply.on_click(None))
+    asyncio.run(panel._rain_apply.on_click(None))
+    assert len(keys) == 2 and keys[0] != keys[1]
+
+
+def test_new_rain_intent_does_not_reuse_an_unrelated_prior_command_id():
+    async def submit(*args):
+        raise AmbiguousCommandResult("lost response")
+
+    panel = _rain_controls(handler=submit, lookup=lambda *args: None)
+    panel._command_id = "prior-valve-command"
+    asyncio.run(panel._rain_apply.on_click(None))
+    assert panel._command_id is None and not panel._check_status.visible
+
+
+def test_schedule_apply_is_disabled_by_offline_or_overdue_store_state(clock):
+    from buzsak_app.settings import Settings
+    from buzsak_app.state.connection import ConnectionStatus
+    from buzsak_app.state.store import Store
+    from buzsak_app.ui.app_view import AppView
+
+    class Page:
+        def update(self):
+            pass
+
+    original = _rain_controls(handler=lambda *args: None)._device
+    source = parse_snapshot(load_state_fixture("normal"))
+    source = replace(source, parties=(
+        replace(source.parties[1], devices=(original,)),))
+    store = Store(clock)
+    view = AppView(Page(), store, Settings(), clock, lambda *args: None,
+                   on_command=lambda *args: None)
+    store.apply_snapshot(source)
+    panel = view._party_tabs["valve_controller"]._sections[original.id]._greenhouse
+    assert not panel._rain_apply.disabled
+    store.apply_failure(ConnectionStatus.OFFLINE, "offline")
+    assert panel._rain_apply.disabled
+    store.apply_snapshot(source)
+    assert not panel._rain_apply.disabled
+    clock.advance(30)
+    view.tick()
+    assert panel._rain_apply.disabled
 
 
 def test_server_disabled_capabilities_keep_controls_disabled_and_show_reason() -> None:
@@ -190,15 +435,18 @@ def test_greenhouse_readings_show_automation_schedules_and_sensors_without_ident
     assert readings._mist_sensor._value.value == strings.SENSOR_VALID
     assert readings._mist_time._value.value == strings.TIME_SYNCHRONIZED
     assert readings._rain_time_sync._value.value == strings.TIME_SYNCHRONIZED
-    assert readings._sensors[0]._temperature._value.value == "21.6 °C"
-    assert readings._sensors[0]._humidity._value.value == "87.4 %"
+    assert readings._sensors[0]._temperature._value.value == "21.6°C"
+    assert readings._sensors[0]._humidity._value.value == "87.4%"
     assert readings._sensors[0]._age.value == "Last good frame 8 s ago"
     assert readings._sensors[1]._age.value == strings.SENSOR_NO_GOOD_FRAME
     assert readings._sensors[1]._error.visible
     assert readings.control.tight
     assert isinstance(readings.control.controls[-1], ft.ResponsiveRow)
-    assert readings.control.controls[-1].controls == [
+    assert readings.control.controls[0].value == strings.SENSORS
+    assert readings.control.controls[1].controls == [
         sensor.control for sensor in readings._sensors]
+    assert readings.control.controls[-1].controls == [
+        readings._mist_panel, readings._rain_panel]
     assert not readings._rain_missing.visible
 
 
@@ -270,9 +518,53 @@ def test_stale_sensor_reading_keeps_its_quality_badge() -> None:
     )
     readings = GreenhouseReadings(replace(device, parameters=parameters))
     humidity = readings._sensors[0]._humidity
-    assert humidity._value.value == "87.4 %"
+    assert humidity._value.value == "87.4%"
     assert humidity._badge.control.visible
     assert humidity._badge._text.value == strings.STATE_STALE
+
+
+def test_sensor_readings_share_one_compact_status_name_temperature_humidity_row():
+    readings = GreenhouseReadings(_device_with_readings())
+    sensor = readings._sensors[0]
+    assert sensor._row.controls == [
+        sensor._indicator, sensor._title, sensor._measurements]
+    assert sensor._measurements.controls[0] is sensor._temperature._value
+    assert sensor._measurements.controls[1].value == "/"
+    assert sensor._measurements.controls[2] is sensor._humidity._value
+    assert sensor._title.expand
+    assert not sensor._health.control.visible and not sensor._quality.visible
+    assert sensor.control.bgcolor is None
+    assert sensor._age not in sensor.control.content.controls
+    assert strings.sensor_age(8) in sensor.control.tooltip
+
+
+@pytest.mark.parametrize("quality", [ValueState.STALE, ValueState.INVALID, ValueState.UNAVAILABLE, ValueState.NO_DATA])
+def test_compact_sensor_rows_keep_explicit_bad_quality_and_no_healthy_indicator(quality):
+    original = _device_with_readings()
+    original = replace(original, parameters=tuple(
+        replace(
+            parameter, state=quality) if parameter.id == "sensor_a_humidity_pct" else parameter
+        for parameter in original.parameters
+    ))
+    sensor = GreenhouseReadings(original)._sensors[0]
+    assert sensor._quality.visible and sensor._humidity._badge.control.visible
+    assert sensor._indicator.icon != ft.Icons.CHECK_CIRCLE
+    assert sensor._indicator.semantics_label == sensor._humidity._badge._text.value
+
+
+def test_compact_sensor_row_preserves_zero_readings_and_reports_faults_explicitly():
+    original = _device_with_readings()
+    original = replace(original, parameters=tuple(
+        replace(parameter, value=0.0) if parameter.id in {"sensor_a_temperature_c", "sensor_a_humidity_pct"}
+        else replace(parameter, value=False) if parameter.id == "sensor_a_ok"
+        else parameter for parameter in original.parameters
+    ))
+    sensor = GreenhouseReadings(original)._sensors[0]
+    assert sensor._temperature._value.value == "0.0°C"
+    assert sensor._humidity._value.value == "0.0%"
+    assert sensor._health.control.visible
+    assert sensor._health._text.value == strings.SENSOR_FAULT
+    assert sensor._indicator.semantics_label == strings.SENSOR_FAULT
 
 
 def test_rain_start_combines_stale_fields_without_marking_the_time_fresh() -> None:

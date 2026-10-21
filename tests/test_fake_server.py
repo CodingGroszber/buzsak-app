@@ -110,6 +110,85 @@ def test_fake_server_state_and_mode_command_update_only_simulated_values(fake_ap
         assert relay is not None and relay.value is False
 
 
+def test_fake_rain_schedule_requires_manual_and_confirms_runtime_configuration_only(fake_api_server) -> None:
+    url, _ = fake_api_server
+
+    async def exercise():
+        async with ServerClient(url, token="fake-operator") as client:
+            with pytest.raises(CommandApiError) as automatic:
+                await client.submit_command("valve-controller", action_id="set_rain_schedule",
+                                            params={"start": "23:55",
+                                                    "duration_minutes": 60},
+                                            idempotency_key="rain-auto")
+            assert automatic.value.code == "precondition_failed"
+            mode = await client.submit_command("valve-controller", action_id="set_mode",
+                                               params={"value": "manual"}, idempotency_key="rain-manual")
+            assert (await client.command_status(mode.command_id)).status == "confirmed"
+            receipt = await client.submit_command("valve-controller", action_id="set_rain_schedule",
+                                                  params={
+                                                      "start": "23:55", "duration_minutes": 60},
+                                                  idempotency_key="rain-schedule-1")
+            status = await client.command_status(receipt.command_id)
+            reported = parse_snapshot(await client.fetch_state()).parties[1].devices[0]
+            assert status.status == "confirmed" and status.action_id == "set_rain_schedule"
+            assert reported.parameter("rain_start_hour").value == 23
+            assert reported.parameter("rain_start_minute").value == 55
+            assert reported.parameter("rain_duration_s").value == 3600
+            assert reported.parameter("mode").value == "manual"
+            assert reported.parameter("rain_valve_on").value is False
+            assert reported.parameter("relay2_rain").value is False
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("scenario", ["uncertain", "failure"])
+def test_fake_rain_failed_or_uncertain_write_does_not_change_reported_schedule(fake_api_server, scenario) -> None:
+    url, api = fake_api_server
+    api._parameter_map()["mode"]["value"] = "manual"
+    api.scenario = scenario
+
+    async def exercise():
+        async with ServerClient(url, token="fake-operator") as client:
+            receipt = await client.submit_command("valve-controller", action_id="set_rain_schedule",
+                                                  params={
+                                                      "start": "06:15", "duration_minutes": 12},
+                                                  idempotency_key="rain-once")
+            assert (await client.command_status(receipt.command_id)).status == ("uncertain" if scenario == "uncertain" else "failed")
+            reported = parse_snapshot(await client.fetch_state()).parties[1].devices[0]
+            assert reported.parameter("rain_start_hour").value == 5
+            assert reported.parameter("rain_start_minute").value == 0
+            assert reported.parameter("rain_duration_s").value == 1200
+            if scenario == "uncertain":
+                with pytest.raises(CommandApiError) as conflict:
+                    await client.submit_command("valve-controller", action_id="set_output",
+                                                params={
+                                                    "name": "relay4", "state": True},
+                                                idempotency_key="conflicting-light")
+                assert conflict.value.code == "conflict"
+
+    asyncio.run(exercise())
+    assert len(api.commands) == 1
+
+
+@pytest.mark.parametrize("params", [
+    {"start": "24:00", "duration_minutes": 10},
+    {"start": "06:00", "duration_minutes": True},
+    {"start": "06:00", "duration_minutes": 0},
+    {"start": "06:00", "duration_minutes": 61},
+])
+def test_fake_rain_schedule_rejects_invalid_inputs(fake_api_server, params) -> None:
+    url, _ = fake_api_server
+
+    async def exercise():
+        async with ServerClient(url, token="fake-operator") as client:
+            with pytest.raises(CommandApiError) as rejected:
+                await client.submit_command("valve-controller", action_id="set_rain_schedule",
+                                            params=params, idempotency_key="invalid-rain")
+            assert rejected.value.code == "invalid_request"
+
+    asyncio.run(exercise())
+
+
 def test_fake_plc_refill_uses_versioned_command_and_confirms_only_simulated_state(fake_api_server) -> None:
     url, api = fake_api_server
 

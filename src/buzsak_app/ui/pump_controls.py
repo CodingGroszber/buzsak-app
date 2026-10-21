@@ -14,11 +14,13 @@ from buzsak_app.ui import strings, theme
 from buzsak_app.ui.command_visuals import command_state_tone
 from buzsak_app.ui.components import muted_text, section_title
 from buzsak_app.ui.greenhouse_controls import CommandHandler, CommandLookup
-from buzsak_app.ui.parameter_readout import ParameterReadout
+from buzsak_app.ui.parameter_readout import ParameterReadout, SensorReadout
 from buzsak_app.ui.theme import SPACING
 from buzsak_app.ui.view_models import Tone, device_identity
 
 _TERMINAL = frozenset({"confirmed", "failed", "expired", "cancelled"})
+_SENSOR_SIGNALS = {"water_level_liters": "water_level_signal",
+                   "pressure_bar": "pressure_signal"}
 
 
 class PumpControls:
@@ -49,14 +51,16 @@ class PumpControls:
         for title, identifiers in strings.PUMP_READOUT_GROUPS:
             rows = []
             for identifier in identifiers:
-                readout = ParameterReadout(
+                readout_type = SensorReadout if identifier in _SENSOR_SIGNALS else ParameterReadout
+                readout = readout_type(
                     strings.PUMP_PARAMETER_LABELS[identifier])
                 self._readouts[identifier] = readout
-                if rows:
+                if rows and not isinstance(readout, SensorReadout):
                     rows.append(ft.Divider(height=1, thickness=1))
                 rows.append(readout.control)
             groups.append(
-                ft.Column([section_title(title), *rows], spacing=SPACING.sm))
+                ft.Column([section_title(title), *rows],
+                          spacing=SPACING.xs if all(identifier in _SENSOR_SIGNALS for identifier in identifiers) else SPACING.sm))
         self.handled_parameter_ids = frozenset(strings.PUMP_PARAMETER_LABELS)
         self.control = ft.Column([
             ft.Column([
@@ -109,8 +113,11 @@ class PumpControls:
         """Update server-reported telemetry in place without optimistic state (CTL-05)."""
         self._device = device
         for identifier, readout in self._readouts.items():
-            if changed is None or identifier in changed:
+            signal_id = _SENSOR_SIGNALS.get(identifier)
+            if changed is None or identifier in changed or signal_id in changed:
                 readout.update(device.parameter(identifier))
+                if isinstance(readout, SensorReadout):
+                    readout.set_signal(device.parameter(signal_id))
         reason = self._disabled_reason()
         self._reason.value = reason
         self._reason.visible = bool(reason)
